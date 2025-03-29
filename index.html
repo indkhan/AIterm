@@ -1,21 +1,48 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Hello World Extension</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        padding: 10px;
-        width: 200px;
-      }
-      h1 {
-        font-size: 18px;
-      }
-    </style>
+    <title>AIterm - Terms Analyzer</title>
+    <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-    <h1>Hello World!</h1>
-    <button id="clickMe">Click me</button>
+    <div class="container">
+      <header>
+        <h1>AIterm</h1>
+        <p class="subtitle">Terms & Conditions Analyzer</p>
+      </header>
+      
+      <div class="status-section">
+        <div id="status-indicator" class="status-indicator">
+          <span class="status-dot"></span>
+          <span class="status-text">Analyzing...</span>
+        </div>
+      </div>
+
+      <div class="summary-section">
+        <h2>Summary</h2>
+        <div id="summary-content" class="summary-content">
+          Click the extension icon on a terms page to analyze.
+        </div>
+      </div>
+
+      <div class="red-flags-section" id="red-flags-section">
+        <h3>Potential Concerns</h3>
+        <div id="red-flags-content" class="red-flags-content">
+          Not analyzed yet.
+        </div>
+      </div>
+
+      <div class="chat-section">
+        <h2>Ask Questions</h2>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="chat-input-container">
+          <input type="text" id="chat-input" placeholder="Ask about the terms...">
+          <button id="send-button">Send</button>
+        </div>
+      </div>
+    </div>
+    <!-- Include AI service first so it's available for popup.js -->
+    <script src="ai-service.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
