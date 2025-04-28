@@ -4,21 +4,91 @@
   <meta charset="UTF-8">
   <title>T&C Summarizer</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
-    #summary { margin-bottom: 10px; }
-    #chat { margin-top: 10px; height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 5px; }
-    #inputArea { display: flex; margin-top: 10px; }
-    #userInput { flex: 1; padding: 5px; }
-    #sendBtn { padding: 5px 10px; margin-left: 5px; }
+    :root {
+      --primary-color: #4f46e5;
+      --secondary-color: #f3f4f6;
+      --bg-color: #ffffff;
+      --text-color: #333333;
+      --border-radius: 8px;
+    }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: var(--secondary-color);
+      color: var(--text-color);
+    }
+    .container {
+      max-width: 600px;
+      margin: 2rem auto;
+      padding: 1.5rem;
+      background-color: var(--bg-color);
+      border-radius: var(--border-radius);
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    h1 {
+      font-size: 2rem;
+      text-align: center;
+      margin-bottom: 1rem;
+      color: var(--primary-color);
+    }
+    #summary {
+      margin-bottom: 1.25rem;
+      padding: 1rem;
+      background-color: #f9fafb;
+      border-radius: var(--border-radius);
+      min-height: 100px;
+      font-size: 1rem;
+    }
+    #chat {
+      margin-bottom: 1.25rem;
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: var(--border-radius);
+      padding: 1rem;
+      font-size: 1rem;
+    }
+    #inputArea {
+      display: flex;
+      gap: 1rem;
+    }
+    #userInput {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: var(--border-radius);
+      outline: none;
+      font-size: 1rem;
+    }
+    #userInput:focus {
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 2px rgba(79,70,229,0.2);
+    }
+    #sendBtn {
+      background-color: var(--primary-color);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background-color 0.2s ease;
+    }
+    #sendBtn:hover {
+      background-color: #4338ca;
+    }
   </style>
 </head>
 <body>
-  <h1>T&C Summarizer</h1>
-  <div id="summary">Summary will appear here.</div>
-  <div id="chat"></div>
-  <div id="inputArea">
-    <input type="text" id="userInput" placeholder="Ask a question...">
-    <button id="sendBtn">Ask</button>
+  <div class="container">
+    <h1>T&C Summarizer</h1>
+    <div id="summary">Summary will appear here.</div>
+    <div id="chat"></div>
+    <div id="inputArea">
+      <input type="text" id="userInput" placeholder="Ask a question...">
+      <button id="sendBtn">Ask</button>
+    </div>
   </div>
   <script src="sidebar.js"></script>
 </body>

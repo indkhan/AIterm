@@ -7,6 +7,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const userInput = document.getElementById('userInput');
   const sendBtn = document.getElementById('sendBtn');
 
+  // Trigger send when pressing Enter in input
+  userInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendBtn.click();
+    }
+  });
+
   sendBtn.addEventListener('click', () => {
     const question = userInput.value.trim();
     if (!question) return;
