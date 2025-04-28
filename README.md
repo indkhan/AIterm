@@ -1,74 +1,21 @@
-# AIterm
+> A Chrome extension that auto‑detects any Terms & Conditions page, opens an AI‑powered chatbot in the sidebar to summarize the key points, and lets you ask follow‑up questions—so users get the equivalent of an expert legal reader in one click.
+> 
 
-An AI-powered Chrome extension that automatically analyzes website terms and conditions, providing summaries and answering user questions about the content.
+### Key Pain Point
 
-## Project Overview
-AIterm is a Chrome extension that helps users understand complex terms and conditions by:
-- Automatically detecting and analyzing terms & conditions pages
-- Providing concise summaries of the content
-- Offering an interactive chat interface to ask specific questions
-- Highlighting potential red flags or concerning clauses
+- **Users almost never read T&C.** Just 9% of adults say they always read a company’s privacy policy before agreeing, while 36% never read them at all [Pew Research Center](https://www.pewresearch.org/internet/2019/11/15/americans-attitudes-and-experiences-with-privacy-policies-and-laws/?utm_source=chatgpt.com).
+- **Agreements are huge.** Social‑media terms alone average over 6,100 words—roughly 13 single‑spaced pages—requiring advanced reading levels and over 25 minutes to finish [All About Cookies](https://allaboutcookies.org/social-media-terms-of-service?utm_source=chatgpt.com).
+- **Blind consent is widespread.** A 2017 Deloitte survey found 91% of consumers click “I agree” without reading the contract [Berkeley I School Blogs](https://blogs.ischool.berkeley.edu/w231/2021/07/09/do-we-actually-agree-to-these-terms-and-conditions/?utm_source=chatgpt.com).
 
-## Development Guide
+### Your Solution
 
-### Step 1: Project Setup and Basic Extension Structure
-1. Create a new directory for your Chrome extension
-2. Set up the manifest.json file with basic extension configuration
-3. Create the necessary HTML, CSS, and JavaScript files for the popup interface
-4. Set up a development environment with necessary dependencies
+- **Automatic Detection:** Content scripts spot URLs or DOM patterns for “/terms,” “/privacy,” etc., and trigger the sidebar only on legal pages.
+- **AI Summarization:** An LLM (e.g., GPT‑4) ingests the full text and generates a concise bullet‑point summary of obligations, data uses, user rights, and high‑risk clauses.
+- **Interactive Q&A:** The sidebar chatbot contextually answers questions (“Can they share my data?”, “How do I opt out?”) and points to exact clause excerpts.
+- **Expert Focus:** Prompt‑engineering ensures laser‑focused analysis on privacy, liability, and consumer rights—far deeper than generic “TL;DR” tools.
 
-### Step 2: Content Script Development
-1. Create content scripts to detect terms & conditions pages
-2. Implement page content extraction logic
-3. Add DOM manipulation to identify and highlight terms sections
-4. Set up communication channels between content script and popup
+### Differentiators
 
-### Step 3: AI Integration
-1. Langchain Gemini Api key
-2. Implement text processing to clean and format extracted content
-3. Create prompt engineering for effective summarization
-4. Set up error handling and rate limiting for API calls
-
-### Step 4: User Interface Development
-1. Design and implement the popup interface
-2. Create the chat interface for user questions
-3. Add summary display section
-4. Implement loading states and error messages
-
-### Step 5: Data Processing and Storage
-1. Set up local storage for caching analyzed terms
-2. Implement content parsing and structuring
-3. Create data models for terms analysis
-4. Add functionality to save user preferences
-
-### Step 6: Security and Privacy
-1. Implement secure API key storage
-2. Add data encryption for sensitive information
-3. Create privacy policy and terms of service
-4. Set up content security policy
-
-### Step 8: Deployment and Distribution
-1. Package the extension for Chrome Web Store
-2. Create promotional materials and screenshots
-3. Write documentation for users
-4. Submit for Chrome Web Store review
-
-## Technical Requirements
-- Chrome Extension Manifest V3
-- JavaScript/TypeScript
-- HTML/CSS
-- AI API (e.g., OpenAI GPT)
-- Local Storage API
-- Chrome Extension APIs
-
-## Getting Started
-1. Clone this repository
-2. Install dependencies
-3. Load the extension in Chrome
-4. Start developing!
-
-## Contributing
-Contributions are welcome! Please read our contributing guidelines before submitting pull requests.
-
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+- **Beyond Static Summaries:** Unlike ToS;DR’s A‑to‑E badges (live since 2012), your tool offers real‑time, page‑specific dialogue—no wait for crowdsourced ratings [Wikipedia](https://en.wikipedia.org/wiki/Terms_of_Service%3B_Didn%27t_Read?utm_source=chatgpt.com).
+- **Context Persistence:** Follow‑up queries retain clause context, so users can drill into adjacent sections without re‑explaining.
+- **Seamless UX:** Non‑intrusive sidebar that highlights the original text and anchors chat responses to exact passages.
