@@ -43,4 +43,12 @@ document.addEventListener('DOMContentLoaded', () => {
         chatDiv.scrollTop = chatDiv.scrollHeight;
       });
   });
+
+  // Listen for summary from background and display it
+  chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (msg.action === 'display_summary') {
+      summaryDiv.innerText = msg.summary;
+      chatDiv.innerHTML = '';  // clear previous chat
+    }
+  });
 });

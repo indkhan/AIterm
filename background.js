@@ -10,4 +10,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.warn('No API available to open sidebar or popup');
     }
   }
+  else if (message.action === 'process_tc') {
+    // send page content to server for summarization
+    fetch('http://localhost:5000/api/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: message.url, content: message.content })
+    })
+    .then(res => res.json())
+    .then(data => {
+      // forward summary to sidebar UI
+      chrome.runtime.sendMessage({ action: 'display_summary', summary: data.summary });
+    })
+    .catch(console.error);
+  }
 });

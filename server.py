@@ -19,5 +19,18 @@ def chat():
     response = llm.invoke(prompt)
     return jsonify({'response': response.content})
 
+# New endpoint to summarize Terms & Conditions content
+@app.route('/api/summarize', methods=['POST'])
+def summarize():
+    data = request.json
+    content = data.get('content', '')
+    url = data.get('url', '')
+    if not content:
+        return jsonify({'error': 'No content provided'}), 400
+    prompt = f"Summarize the following Terms & Conditions from {url}:\n\n{content}"
+    response = llm.invoke(prompt)
+    return jsonify({'summary': response.content})
+
 if __name__ == '__main__':
-    app.run(port=5000)
+    # enable debug mode for auto-reload of new routes
+    app.run(debug=True, port=5000)
