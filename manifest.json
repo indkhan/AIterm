@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "T&C Summarizer Sidebar",
+  "version": "0.1.0",
+  "description": "Sidebar extension summarizing terms and conditions",
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "sidebar.html",
+    "default_title": "T&C Summarizer"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

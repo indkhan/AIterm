@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>T&C Summarizer</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 10px; }
+    #summary { margin-bottom: 10px; }
+    #chat { margin-top: 10px; height: 200px; overflow-y: auto; border: 1px solid #ddd; padding: 5px; }
+    #inputArea { display: flex; margin-top: 10px; }
+    #userInput { flex: 1; padding: 5px; }
+    #sendBtn { padding: 5px 10px; margin-left: 5px; }
+  </style>
+</head>
+<body>
+  <h1>T&C Summarizer</h1>
+  <div id="summary">Summary will appear here.</div>
+  <div id="chat"></div>
+  <div id="inputArea">
+    <input type="text" id="userInput" placeholder="Ask a question...">
+    <button id="sendBtn">Ask</button>
+  </div>
+  <script src="sidebar.js"></script>
+</body>
+</html>

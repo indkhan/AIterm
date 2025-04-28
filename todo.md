@@ -1,6 +1,6 @@
 
 # ToDo List for AI-Powered T&C Summarizer Extension
-Use html , css ,Vanilla javascript , tailwind css , (fastapi for backend if needed)
+Use html , css ,Vanilla javascript , tailwind css , (flask for backend if needed)
 ## Step 1: Requirements & Planning
 - [ ] **1.1 Define detection criteria**
   - [ ] List URL patterns (`/terms`, `/privacy`, etc.)
