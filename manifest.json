@@ -5,6 +5,12 @@
   "description": "Sidebar extension summarizing terms and conditions",
   "permissions": ["activeTab", "scripting"],
   "host_permissions": ["<all_urls>"],
+  "web_accessible_resources": [
+    {
+      "resources": ["sidebar.html", "sidebar.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "action": {
     "default_popup": "sidebar.html",
     "default_title": "T&C Summarizer"
