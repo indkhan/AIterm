@@ -12,7 +12,6 @@
     }
   ],
   "action": {
-    "default_popup": "sidebar.html",
     "default_title": "T&C Summarizer"
   },
   "content_scripts": [

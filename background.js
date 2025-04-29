@@ -25,3 +25,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     .catch(console.error);
   }
 });
+
+// Handle toolbar icon clicks: send open_sidebar, fallback to injecting content.js
+chrome.action.onClicked.addListener(async (tab) => {
+  const url = tab.url || '';
+  if (!/^https?:/.test(url)) {
+    console.warn('Skipping open_sidebar on non-http URL:', url);
+    return;
+  }
+  try {
+    await chrome.tabs.sendMessage(tab.id, { action: 'open_sidebar' });
+  } catch (e) {
+    console.warn('No content script listener, injecting content.js', e);
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+    // retry open_sidebar after injection
+    try {
+      await chrome.tabs.sendMessage(tab.id, { action: 'open_sidebar' });
+    } catch (err) {
+      console.error('Failed to open sidebar after injection', err);
+    }
+  }
+});
