@@ -1,0 +1,349 @@
+:root {
+  color-scheme: light;
+  --ink-strong: #172033;
+  --ink: #314158;
+  --ink-soft: #617086;
+  --surface-elevated: rgba(255, 255, 255, 0.86);
+  --surface-line: rgba(23, 32, 51, 0.08);
+  --surface-strong-line: rgba(23, 32, 51, 0.18);
+  --accent: #0f766e;
+  --accent-soft: rgba(15, 118, 110, 0.12);
+  --warning: #b45309;
+  --warning-soft: rgba(180, 83, 9, 0.12);
+  --danger: #b42318;
+  --danger-soft: rgba(180, 35, 24, 0.12);
+  --shadow: 0 24px 64px rgba(23, 32, 51, 0.12);
+  --radius-lg: 22px;
+  --radius-md: 16px;
+  --radius-sm: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(15, 118, 110, 0.1), transparent 36%),
+    linear-gradient(180deg, #fbf6eb 0%, #fffdf8 48%, #fffaf2 100%);
+  color: var(--ink);
+}
+
+body {
+  font: 400 14px/1.55 "Aptos", "Segoe UI", system-ui, sans-serif;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 18px;
+  gap: 16px;
+}
+
+.hero,
+.panel,
+.conversation,
+.empty-state,
+.error-state {
+  border: 1px solid var(--surface-line);
+  background: var(--surface-elevated);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow);
+}
+
+.hero {
+  border-radius: 28px;
+  padding: 20px;
+}
+
+.eyebrow,
+.muted {
+  color: var(--ink-soft);
+}
+
+.eyebrow {
+  margin-bottom: 10px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hero h1 {
+  margin: 0 0 8px;
+  color: var(--ink-strong);
+  font: 600 28px/1.08 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+}
+
+.hero p {
+  margin: 0;
+}
+
+.status-row,
+.toolbar,
+.chip-row,
+.analysis-grid,
+.risk-card footer,
+.message footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.status-pill,
+.citation-chip,
+.suggested-btn,
+.soft-btn,
+.primary-btn,
+.toggle {
+  border-radius: 999px;
+}
+
+.status-pill,
+.citation-chip,
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border: 1px solid var(--surface-line);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.toolbar {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.primary-btn,
+.soft-btn,
+.suggested-btn {
+  border: 1px solid transparent;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+}
+
+.primary-btn:hover,
+.soft-btn:hover,
+.suggested-btn:hover {
+  transform: translateY(-1px);
+}
+
+.primary-btn {
+  background: linear-gradient(135deg, #0f766e, #115e59);
+  color: white;
+  padding: 11px 16px;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22);
+}
+
+.soft-btn,
+.suggested-btn {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: var(--surface-line);
+  color: var(--ink-strong);
+  padding: 10px 14px;
+}
+
+.toggle {
+  padding-right: 16px;
+}
+
+.toggle input {
+  accent-color: var(--accent);
+}
+
+.analysis-grid {
+  align-items: start;
+}
+
+.panel {
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+
+.panel h2,
+.conversation h2,
+.empty-state h2,
+.error-state h2 {
+  margin: 0 0 10px;
+  color: var(--ink-strong);
+  font: 600 20px/1.15 "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+}
+
+.summary-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.summary-list li + li {
+  margin-top: 10px;
+}
+
+.cards {
+  display: grid;
+  gap: 12px;
+}
+
+.risk-card,
+.message,
+.empty-state,
+.error-state {
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.risk-card {
+  border: 1px solid var(--surface-line);
+  background: linear-gradient(180deg, rgba(255,255,255,0.88), rgba(248,244,236,0.88));
+}
+
+.risk-card header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.risk-card h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--ink-strong);
+}
+
+.severity {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.severity-high {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.severity-medium {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.severity-low {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.citation-chip {
+  background: rgba(15, 118, 110, 0.08);
+  border-color: rgba(15, 118, 110, 0.14);
+  color: var(--ink-strong);
+}
+
+.conversation {
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.message {
+  border: 1px solid var(--surface-line);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.message-user {
+  background: rgba(15, 118, 110, 0.08);
+}
+
+.message header {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.message footer {
+  margin-top: 10px;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.composer input {
+  min-width: 0;
+  border: 1px solid var(--surface-strong-line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 12px 14px;
+  color: var(--ink-strong);
+}
+
+.composer input:focus {
+  outline: 2px solid rgba(15, 118, 110, 0.2);
+  border-color: rgba(15, 118, 110, 0.45);
+}
+
+.empty-state,
+.error-state {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.skeleton {
+  height: 14px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(226,232,240,0.7), rgba(255,255,255,0.95), rgba(226,232,240,0.7));
+  background-size: 200% 100%;
+  animation: shimmer 1.3s infinite linear;
+}
+
+.skeleton + .skeleton {
+  margin-top: 10px;
+}
+
+.trust-note {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px dashed rgba(15, 23, 42, 0.12);
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}

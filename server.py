@@ -1,36 +1,72 @@
-from flask import Flask, request, jsonify
-from langchain_google_genai import ChatGoogleGenerativeAI
-from flask_cors import CORS
-from dotenv import load_dotenv
 import os
+
+from dotenv import load_dotenv
+from flask import Flask, jsonify, request
+from flask_cors import CORS
+
+from analysis_engine import analyze_document, answer_question, build_provider
+
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-llm = ChatGoogleGenerativeAI(model='gemini-2.0-flash', temperature=0.1,api_key=os.getenv('GEMINI_API_KEY'))
+ANALYSIS_STORE = {}
 
-@app.route('/api/chat', methods=['POST'])
-def chat():
-    data = request.json
-    prompt = data.get('prompt', '')
-    if not prompt:
-        return jsonify({'error': 'No prompt provided'}), 400
-    response = llm.invoke(prompt)
-    return jsonify({'response': response.content})
 
-# New endpoint to summarize Terms & Conditions content
-@app.route('/api/summarize', methods=['POST'])
-def summarize():
-    data = request.json
-    content = data.get('content', '')
-    url = data.get('url', '')
-    if not content:
-        return jsonify({'error': 'No content provided'}), 400
-    prompt = f"Summarize the following Terms & Conditions from {url}:\n\n{content}"
-    response = llm.invoke(prompt)
-    return jsonify({'summary': response.content})
+@app.get("/health")
+def health():
+    provider = build_provider()
+    return jsonify(
+        {
+            "ok": True,
+            "providerConfigured": provider is not None,
+            "provider": provider["name"] if provider else "heuristic",
+        }
+    )
 
-if __name__ == '__main__':
-    # enable debug mode for auto-reload of new routes
-    app.run(debug=True, port=5000)
+
+@app.post("/v1/analyze-page")
+def analyze_page():
+    payload = request.get_json(silent=True) or {}
+    url = payload.get("url", "")
+    sections = payload.get("sections", [])
+    metadata = payload.get("metadata", {})
+    detection = payload.get("detection", {})
+
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+
+    try:
+        record = analyze_document(url, metadata, detection, sections)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    ANALYSIS_STORE[record["analysisId"]] = record
+    return jsonify(record["response"])
+
+
+@app.post("/v1/ask-followup")
+def ask_followup():
+    payload = request.get_json(silent=True) or {}
+    analysis_id = payload.get("analysisId")
+    question = payload.get("question", "")
+    active_clause_id = payload.get("activeClauseId")
+
+    if not analysis_id:
+        return jsonify({"error": "analysisId is required"}), 400
+
+    record = ANALYSIS_STORE.get(analysis_id)
+    if not record:
+        return jsonify({"error": "analysis session not found"}), 404
+
+    try:
+        answer = answer_question(record, question, active_clause_id=active_clause_id)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    return jsonify(answer)
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="127.0.0.1", port=5000)
