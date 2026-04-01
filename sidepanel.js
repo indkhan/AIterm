@@ -94,12 +94,11 @@ function renderBody(page) {
     return `
       <section class="panel">
         <h2>Analyzing this document</h2>
-        <p class="muted">Checking visible legal text first, then linked policy pages if the current page is too weak.</p>
+        <p class="muted">Reading visible legal text and all discovered linked Terms, Privacy, and Cookies pages in the background.</p>
         <div class="skeleton"></div>
         <div class="skeleton"></div>
         <div class="skeleton"></div>
       </section>
-      ${renderLinkedPolicyCandidates(page, false)}
       ${renderTrustNote(page)}
     `;
   }
@@ -113,7 +112,6 @@ function renderBody(page) {
           <button class="primary-btn" data-action="analyze">Try again</button>
         </div>
       </section>
-      ${renderLinkedPolicyCandidates(page, true)}
       ${renderTrustNote(page)}
     `;
   }
@@ -122,12 +120,11 @@ function renderBody(page) {
     return `
       <section class="empty-state">
         <h2>This page does not look like a policy page</h2>
-        <p>The detector did not find a full standalone policy, but Terms Lens can still inspect inline legal text and discovered policy links.</p>
+        <p>The detector did not find a full standalone policy, but Terms Lens can still inspect inline legal text and automatically read discovered policy links in the background.</p>
         <div class="button-row" style="margin-top:12px">
           <button class="soft-btn" data-action="analyze">Analyze anyway</button>
         </div>
       </section>
-      ${renderLinkedPolicyCandidates(page, true)}
       ${renderTrustNote(page)}
     `;
   }
@@ -136,15 +133,13 @@ function renderBody(page) {
     return `
       <section class="empty-state">
         <h2>Ready to review this document</h2>
-        <p>Run analysis to inspect visible legal text first, then linked Terms, Privacy, or Cookies pages in the background if needed.</p>
+        <p>Run analysis to inspect visible legal text and automatically read linked Terms, Privacy, and Cookies pages in the background.</p>
       </section>
-      ${renderLinkedPolicyCandidates(page, true)}
       ${renderTrustNote(page)}
     `;
   }
 
   return `
-    ${renderLinkedPolicyCandidates(page, true)}
     <div class="analysis-grid">
       <section class="panel">
         <div class="eyebrow">What matters most</div>
@@ -171,29 +166,6 @@ function renderBody(page) {
       ${renderConversation(page.analysis)}
     </div>
     ${renderTrustNote(page)}
-  `;
-}
-
-function renderLinkedPolicyCandidates(page, expanded) {
-  const candidates = page.linkedPolicyCandidates || [];
-  if (!candidates.length) {
-    return '';
-  }
-
-  const visible = expanded ? candidates : candidates.slice(0, 2);
-  return `
-    <section class="panel">
-      <div class="eyebrow">Linked policy targets</div>
-      <h2>Detected from this page</h2>
-      <p class="muted">Terms Lens can read these linked policy pages in the background without navigating you away.</p>
-      <div class="chip-row" style="margin-top:12px">
-        ${visible.map((policy) => `
-          <button class="suggested-btn" data-action="analyze-policy" data-policy-url="${escapeAttribute(policy.url)}">
-            ${escapeHtml(policy.label || (state.labels[policy.pageType] || 'Policy'))}
-          </button>
-        `).join('')}
-      </div>
-    </section>
   `;
 }
 
@@ -289,15 +261,6 @@ function bindEvents() {
   app.querySelectorAll('[data-action="analyze"]').forEach((button) => {
     button.addEventListener('click', async () => {
       await sendBackgroundMessage({ type: 'RUN_ANALYSIS' });
-    });
-  });
-
-  app.querySelectorAll('[data-action="analyze-policy"]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      await sendBackgroundMessage({
-        type: 'RUN_ANALYSIS',
-        policyUrl: button.dataset.policyUrl,
-      });
     });
   });
 

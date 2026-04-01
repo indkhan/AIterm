@@ -66,7 +66,7 @@ async function handleMessage(message, sender) {
     }
     case 'RUN_ANALYSIS': {
       const tabId = await resolveActiveTabId(message.tabId);
-      return await runAnalysis(tabId, message.policyUrl || null);
+      return await runAnalysis(tabId);
     }
     case 'ASK_FOLLOWUP': {
       const tabId = await resolveActiveTabId(message.tabId);
@@ -264,7 +264,7 @@ async function buildPanelState(tabId) {
   };
 }
 
-async function runAnalysis(tabId, requestedPolicyUrl = null) {
+async function runAnalysis(tabId) {
   const current = await readTabState(tabId);
   const tab = await chrome.tabs.get(tabId);
 
@@ -288,7 +288,6 @@ async function runAnalysis(tabId, requestedPolicyUrl = null) {
     tab.url,
     extraction,
     current?.linkedPolicyCache || {},
-    requestedPolicyUrl,
   );
 
   if (!sourceInput || !sourceInput.sections?.length) {
@@ -360,12 +359,11 @@ async function runAnalysis(tabId, requestedPolicyUrl = null) {
   }
 }
 
-async function resolveAnalysisInput(originPageUrl, extraction, cache, requestedPolicyUrl) {
+async function resolveAnalysisInput(originPageUrl, extraction, cache) {
   const updatedCache = { ...cache };
-  const currentPreferred = isStrongCurrentExtraction(extraction);
-  const candidateList = rankLinkedPolicies(extraction.linkedPolicies || [], requestedPolicyUrl);
+  const candidateList = rankLinkedPolicies(extraction.linkedPolicies || []);
 
-  if (!requestedPolicyUrl && currentPreferred) {
+  if (!candidateList.length && extraction.sections?.length) {
     return {
       sourceInput: extraction,
       analysisSource: describeCurrentSource(extraction),
@@ -374,43 +372,46 @@ async function resolveAnalysisInput(originPageUrl, extraction, cache, requestedP
     };
   }
 
+  const fetchedInputs = [];
+  const usedPolicies = [];
+
   for (const policy of candidateList) {
     const cached = updatedCache[policy.url];
     if (cached?.sections?.length) {
-      return {
-        sourceInput: cached,
-        analysisSource: {
-          type: 'linked-policy-fetch',
-          label: policy.label || policy.pageType,
-          pageType: policy.pageType,
-          url: policy.url,
-          originPageUrl,
-        },
-        updatedCache,
-        fallbackError: null,
-      };
+      fetchedInputs.push(cached);
+      usedPolicies.push(policy);
+      continue;
     }
 
     try {
       const fetched = await fetchLinkedPolicyExtraction(policy, originPageUrl);
       if (fetched?.sections?.length) {
         updatedCache[policy.url] = fetched;
-        return {
-          sourceInput: fetched,
-          analysisSource: {
-            type: 'linked-policy-fetch',
-            label: policy.label || policy.pageType,
-            pageType: policy.pageType,
-            url: policy.url,
-            originPageUrl,
-          },
-          updatedCache,
-          fallbackError: null,
-        };
+        fetchedInputs.push(fetched);
+        usedPolicies.push(policy);
+      } else {
+        updatedCache[policy.url] = { error: true };
       }
     } catch (_error) {
       updatedCache[policy.url] = { error: true };
     }
+  }
+
+  if (fetchedInputs.length) {
+    const merged = mergeLinkedPolicyInputs(fetchedInputs, usedPolicies, originPageUrl, extraction);
+    return {
+      sourceInput: merged,
+      analysisSource: {
+        type: 'linked-policy-fetch',
+        label: usedPolicies.length > 1 ? 'linked policy pages' : (usedPolicies[0].label || usedPolicies[0].pageType),
+        pageType: chooseMergedPageType(usedPolicies, extraction.detection?.pageType),
+        url: usedPolicies.map((policy) => policy.url).join(', '),
+        originPageUrl,
+        count: usedPolicies.length,
+      },
+      updatedCache,
+      fallbackError: null,
+    };
   }
 
   if (extraction.sections?.length) {
@@ -451,31 +452,70 @@ function describeCurrentSource(extraction) {
   };
 }
 
-function isStrongCurrentExtraction(extraction) {
-  const sectionCount = extraction.sections?.length || 0;
-  const wordCount = extraction.metadata?.wordCount || 0;
-  const sourceHints = extraction.sourceHints || [];
-  return (
-    sectionCount >= 2 ||
-    wordCount >= 160 ||
-    (sectionCount >= 1 && sourceHints.some((hint) => ['cookie-banner', 'inline-policy-copy', 'auth-page', 'modal'].includes(hint)))
-  );
-}
-
-function rankLinkedPolicies(policies, requestedPolicyUrl) {
+function rankLinkedPolicies(policies) {
   const list = [...(policies || [])];
   list.sort((a, b) => {
-    const aRequested = requestedPolicyUrl && a.url === requestedPolicyUrl ? 1 : 0;
-    const bRequested = requestedPolicyUrl && b.url === requestedPolicyUrl ? 1 : 0;
-    if (aRequested !== bRequested) {
-      return bRequested - aRequested;
-    }
     if (a.sameOrigin !== b.sameOrigin) {
       return a.sameOrigin ? -1 : 1;
     }
     return (b.confidence || 0) - (a.confidence || 0);
   });
   return list;
+}
+
+function mergeLinkedPolicyInputs(inputs, policies, originPageUrl, extraction) {
+  const sections = [];
+  const seenKeys = new Set();
+  let wordCount = 0;
+
+  inputs.forEach((input, index) => {
+    const policy = policies[index];
+    (input.sections || []).forEach((section) => {
+      const key = `${policy.url}:${section.heading}:${section.text.slice(0, 140)}`;
+      if (seenKeys.has(key)) {
+        return;
+      }
+      seenKeys.add(key);
+      sections.push({
+        ...section,
+        id: `${slugify(policy.pageType || 'policy')}-${section.id || sections.length + 1}`,
+        heading: policy.label ? `${policy.label}: ${section.heading}` : section.heading,
+        order: sections.length,
+      });
+      wordCount += section.text.split(/\s+/).filter(Boolean).length;
+    });
+  });
+
+  return {
+    url: originPageUrl,
+    title: extraction.title,
+    detection: {
+      ...extraction.detection,
+      isLegalPage: true,
+      hasLegalLinks: policies.length > 0,
+      bestPolicySource: 'linked-policy-fetch',
+      pageType: chooseMergedPageType(policies, extraction.detection?.pageType),
+    },
+    metadata: {
+      locale: extraction.metadata?.locale || 'unknown',
+      wordCount,
+      extractedAt: new Date().toISOString(),
+      sectionCount: sections.length,
+    },
+    sections,
+    linkedPolicies: extraction.linkedPolicies || [],
+    sourceHints: ['linked-policy-fetch'],
+    originPageUrl,
+  };
+}
+
+function chooseMergedPageType(policies, fallbackType) {
+  const counts = {};
+  policies.forEach((policy) => {
+    counts[policy.pageType] = (counts[policy.pageType] || 0) + 1;
+  });
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  return top?.[0] || fallbackType || 'generic';
 }
 
 async function fetchLinkedPolicyExtraction(policy, originPageUrl) {
