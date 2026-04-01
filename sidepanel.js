@@ -67,6 +67,7 @@ function renderShell() {
           <span class="status-pill">${escapeHtml(statusText)}</span>
           ${detection ? `<span class="status-pill">Confidence ${(detection.confidence * 100).toFixed(0)}%</span>` : ''}
           <span class="status-pill">Session only</span>
+          ${page.analysisSource ? `<span class="status-pill">${escapeHtml(getSourceLabel(page.analysisSource))}</span>` : ''}
         </div>
         <div class="toolbar" style="margin-top:16px">
           <div class="button-row">
@@ -93,12 +94,13 @@ function renderBody(page) {
     return `
       <section class="panel">
         <h2>Analyzing this document</h2>
-        <p class="muted">Extracting clauses, preparing grounded summary, and generating risk cards.</p>
+        <p class="muted">Checking visible legal text first, then linked policy pages if the current page is too weak.</p>
         <div class="skeleton"></div>
         <div class="skeleton"></div>
         <div class="skeleton"></div>
       </section>
-      ${renderTrustNote()}
+      ${renderLinkedPolicyCandidates(page, false)}
+      ${renderTrustNote(page)}
     `;
   }
 
@@ -111,7 +113,8 @@ function renderBody(page) {
           <button class="primary-btn" data-action="analyze">Try again</button>
         </div>
       </section>
-      ${renderTrustNote()}
+      ${renderLinkedPolicyCandidates(page, true)}
+      ${renderTrustNote(page)}
     `;
   }
 
@@ -119,12 +122,13 @@ function renderBody(page) {
     return `
       <section class="empty-state">
         <h2>This page does not look like a policy page</h2>
-        <p>The detector did not find strong legal-document signals. You can still run analysis manually if you want to inspect it anyway.</p>
+        <p>The detector did not find a full standalone policy, but Terms Lens can still inspect inline legal text and discovered policy links.</p>
         <div class="button-row" style="margin-top:12px">
           <button class="soft-btn" data-action="analyze">Analyze anyway</button>
         </div>
       </section>
-      ${renderTrustNote()}
+      ${renderLinkedPolicyCandidates(page, true)}
+      ${renderTrustNote(page)}
     `;
   }
 
@@ -132,13 +136,15 @@ function renderBody(page) {
     return `
       <section class="empty-state">
         <h2>Ready to review this document</h2>
-        <p>Run analysis to get a concise summary, consumer-risk flags, and grounded follow-up answers with clause citations.</p>
+        <p>Run analysis to inspect visible legal text first, then linked Terms, Privacy, or Cookies pages in the background if needed.</p>
       </section>
-      ${renderTrustNote()}
+      ${renderLinkedPolicyCandidates(page, true)}
+      ${renderTrustNote(page)}
     `;
   }
 
   return `
+    ${renderLinkedPolicyCandidates(page, true)}
     <div class="analysis-grid">
       <section class="panel">
         <div class="eyebrow">What matters most</div>
@@ -164,7 +170,30 @@ function renderBody(page) {
       </section>
       ${renderConversation(page.analysis)}
     </div>
-    ${renderTrustNote(page.analysis)}
+    ${renderTrustNote(page)}
+  `;
+}
+
+function renderLinkedPolicyCandidates(page, expanded) {
+  const candidates = page.linkedPolicyCandidates || [];
+  if (!candidates.length) {
+    return '';
+  }
+
+  const visible = expanded ? candidates : candidates.slice(0, 2);
+  return `
+    <section class="panel">
+      <div class="eyebrow">Linked policy targets</div>
+      <h2>Detected from this page</h2>
+      <p class="muted">Terms Lens can read these linked policy pages in the background without navigating you away.</p>
+      <div class="chip-row" style="margin-top:12px">
+        ${visible.map((policy) => `
+          <button class="suggested-btn" data-action="analyze-policy" data-policy-url="${escapeAttribute(policy.url)}">
+            ${escapeHtml(policy.label || (state.labels[policy.pageType] || 'Policy'))}
+          </button>
+        `).join('')}
+      </div>
+    </section>
   `;
 }
 
@@ -219,11 +248,17 @@ function renderMessage(message) {
   `;
 }
 
-function renderTrustNote(analysis = null) {
-  const groundedText = analysis?.groundingNote || 'Terms Lens sends extracted page sections to your configured analysis backend. Raw page text is kept only in session storage inside the extension by default.';
+function renderTrustNote(page) {
+  const analysisSource = page.analysisSource;
+  const groundedText = page.analysis?.groundingNote || 'Terms Lens sends extracted page sections to your configured analysis backend. Raw page text is kept only in session storage inside the extension by default.';
+  const sourceText = analysisSource
+    ? `Analysis source: ${getSourceLabel(analysisSource)}${analysisSource.url ? ` (${analysisSource.url})` : ''}.`
+    : 'Analysis source: not selected yet.';
+
   return `
     <section class="panel trust-note">
       <div class="eyebrow">Trust layer</div>
+      <p style="margin:0 0 8px 0">${escapeHtml(sourceText)}</p>
       <p style="margin:0">${escapeHtml(groundedText)}</p>
     </section>
   `;
@@ -257,6 +292,15 @@ function bindEvents() {
     });
   });
 
+  app.querySelectorAll('[data-action="analyze-policy"]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await sendBackgroundMessage({
+        type: 'RUN_ANALYSIS',
+        policyUrl: button.dataset.policyUrl,
+      });
+    });
+  });
+
   app.querySelectorAll('[data-action="refresh"]').forEach((button) => {
     button.addEventListener('click', refreshState);
   });
@@ -265,7 +309,7 @@ function bindEvents() {
     button.addEventListener('click', async () => {
       await sendBackgroundMessage({
         type: 'OPEN_CITATION',
-        clauseId: button.dataset.clauseId
+        clauseId: button.dataset.clauseId,
       });
     });
   });
@@ -292,8 +336,8 @@ function bindEvents() {
     await sendBackgroundMessage({
       type: 'SAVE_PREFS',
       prefs: {
-        autoOpen: event.currentTarget.checked
-      }
+        autoOpen: event.currentTarget.checked,
+      },
     });
     await refreshState();
   });
@@ -305,7 +349,7 @@ async function submitQuestion(question) {
   try {
     await sendBackgroundMessage({
       type: 'ASK_FOLLOWUP',
-      question
+      question,
     });
   } finally {
     state.asking = false;
@@ -332,12 +376,28 @@ function getStatusText(status, detection) {
     return 'Analysis error';
   }
   if (status === 'not-legal') {
-    return 'Low legal-page confidence';
+    return detection?.hasLegalLinks ? 'Linked policy detected' : 'Low legal-page confidence';
   }
   if (detection?.isLegalPage) {
     return 'Policy page detected';
   }
+  if (detection?.hasLegalLinks) {
+    return 'Linked policy detected';
+  }
   return 'Ready';
+}
+
+function getSourceLabel(source) {
+  if (!source) {
+    return 'Source unknown';
+  }
+  if (source.type === 'linked-policy-fetch') {
+    return `Using linked ${state.labels[source.pageType] || source.label || 'policy'}`;
+  }
+  if (source.type === 'current-page-inline') {
+    return `Using inline ${state.labels[source.pageType] || source.label || 'policy'} text`;
+  }
+  return `Using current ${state.labels[source.pageType] || source.label || 'page'}`;
 }
 
 function escapeHtml(value) {
