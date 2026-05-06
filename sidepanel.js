@@ -1,3 +1,15 @@
+const ICONS = {
+  settings: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+  back: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>`,
+  spark: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg>`,
+  send: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>`,
+  shield: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
+  refresh: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`,
+  zap: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  check: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>`,
+  alert: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>`,
+};
+
 const state = {
   tabId: null,
   llmConfig: null,
@@ -79,7 +91,7 @@ function renderHeader(inSettings) {
         <span>Terms Lens</span>
       </div>
       <button class="icon-btn" data-action="${inSettings ? 'go-main' : 'go-settings'}" title="${inSettings ? 'Back' : 'Settings'}" aria-label="${inSettings ? 'Back' : 'Settings'}">
-        ${inSettings ? '←' : '⚙'}
+        ${inSettings ? ICONS.back : ICONS.settings}
       </button>
     </div>
   `;
@@ -97,19 +109,19 @@ function renderMain() {
     ${renderHero(page)}
     ${renderStatusOrError(page, status)}
     ${renderAnalysis(page, status)}
-    <div class="footnote">Analysis powered by your Gemini key. Page text leaves your browser only when you click Analyze.</div>
+    <div class="footnote">${ICONS.shield} Analysis powered by your Gemini key. Page text leaves your browser only when you click Analyze.</div>
   `;
 }
 
 function renderOnboardingBanner() {
   return `
     <div class="banner">
-      <div class="banner-icon">!</div>
+      <div class="banner-icon">${ICONS.spark}</div>
       <div>
         <h3>Add your API key to start</h3>
         <p>Terms Lens runs entirely from your browser using your own Gemini key. Free tier available — get a key from Google AI Studio in under a minute.</p>
         <div class="btn-row" style="margin-top:12px">
-          <button class="btn-primary" data-action="go-settings">Open settings</button>
+          <button class="btn-primary" data-action="go-settings">${ICONS.zap}<span>Open settings</span></button>
         </div>
       </div>
     </div>
@@ -126,12 +138,13 @@ function renderHero(page) {
 
   return `
     <div class="card hero">
-      <div class="eyebrow">${escapeHtml(pageType)}</div>
+      <div class="hero-glow" aria-hidden="true"></div>
+      <div class="eyebrow eyebrow-accent">${escapeHtml(pageType)}</div>
       <h1>${escapeHtml(title)}</h1>
-      <p class="subtitle">${escapeHtml(url)}</p>
+      ${url ? `<p class="subtitle">${escapeHtml(url)}</p>` : ''}
       <div class="status-row" style="margin-top:12px">
-        ${signupCount ? `<span class="pill pill-accent">Signup form detected</span>` : ''}
-        ${linkCount ? `<span class="pill">${linkCount} policy link${linkCount === 1 ? '' : 's'} found</span>` : ''}
+        ${signupCount ? `<span class="pill pill-accent pill-dot">Signup form detected</span>` : ''}
+        ${linkCount ? `<span class="pill pill-dot">${linkCount} policy link${linkCount === 1 ? '' : 's'} found</span>` : ''}
       </div>
     </div>
   `;
@@ -156,13 +169,13 @@ function renderStatusOrError(page, status) {
 
   if (status === 'error') {
     return `
-      <div class="card" style="border-color: rgba(185,28,28,0.2)">
+      <div class="card" style="border-color: rgba(251,113,133,0.25)">
         <div class="eyebrow" style="color: var(--danger)">Analysis stopped</div>
         <h2>Something went wrong</h2>
         <p>${escapeHtml(page.lastError || 'Unknown error')}</p>
-        <div class="btn-row" style="margin-top:8px">
-          <button class="btn-primary" data-action="analyze">Try again</button>
-          <button class="btn-secondary" data-action="go-settings">Settings</button>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn-primary" data-action="analyze">${ICONS.refresh}<span>Try again</span></button>
+          <button class="btn-secondary" data-action="go-settings">${ICONS.settings}<span>Settings</span></button>
         </div>
       </div>
     `;
@@ -202,7 +215,7 @@ function renderAnalyzingState(page) {
 
   return `
     <div class="card">
-      <div class="eyebrow">In progress</div>
+      <div class="eyebrow eyebrow-accent"><span class="pill pill-accent pill-dot pill-pulse" style="padding:2px 8px;font-size:10px">In progress</span></div>
       <h2>${escapeHtml(title)}</h2>
       <p>${escapeHtml(detail)}</p>
       <div class="progress">
@@ -222,10 +235,11 @@ function renderReadyToAnalyze(page) {
 
   if (!linkCount && !signupCount && !detection?.isLegalPage) {
     return `
+      <div class="eyebrow">Idle</div>
       <h2>No policy detected here</h2>
       <p>Open a Terms, Privacy, or signup page to analyze. Or run analysis on the visible text anyway.</p>
-      <div class="btn-row" style="margin-top:8px">
-        <button class="btn-secondary" data-action="analyze">Analyze visible text</button>
+      <div class="btn-row" style="margin-top:12px">
+        <button class="btn-secondary" data-action="analyze">${ICONS.zap}<span>Analyze visible text</span></button>
       </div>
     `;
   }
@@ -237,10 +251,11 @@ function renderReadyToAnalyze(page) {
       : `This looks like a policy page. Click Analyze to summarize.`;
 
   return `
+    <div class="eyebrow eyebrow-accent">Ready</div>
     <h2>Ready to analyze</h2>
     <p>${escapeHtml(description)}</p>
-    <div class="btn-row" style="margin-top:8px">
-      <button class="btn-primary" data-action="analyze">Analyze policy</button>
+    <div class="btn-row" style="margin-top:12px">
+      <button class="btn-primary" data-action="analyze">${ICONS.zap}<span>Analyze policy</span></button>
     </div>
   `;
 }
@@ -256,7 +271,7 @@ function renderAnalysis(page, status) {
     ${renderKeyPoints(analysis)}
     ${renderConversation(analysis)}
     <div class="btn-row" style="justify-content:center;margin-top:4px">
-      <button class="btn-secondary" data-action="analyze">Re-run analysis</button>
+      <button class="btn-secondary" data-action="analyze">${ICONS.refresh}<span>Re-run analysis</span></button>
     </div>
   `;
 }
@@ -341,8 +356,8 @@ function renderConversation(analysis) {
         ${conversation.length ? conversation.map(renderMessage).join('') : '<p class="subtitle" style="font-size:12.5px">No questions yet. Try one of the suggestions, or ask your own.</p>'}
       </div>
       <form class="composer" data-action="ask-form">
-        <input type="text" name="question" placeholder="Ask anything about this policy..." aria-label="Ask a question" ${state.asking ? 'disabled' : ''}>
-        <button class="btn-primary" type="submit" ${state.asking ? 'disabled' : ''}>${state.asking ? 'Asking…' : 'Ask'}</button>
+        <input type="text" name="question" placeholder="Ask anything about this policy…" aria-label="Ask a question" ${state.asking ? 'disabled' : ''}>
+        <button class="btn-primary" type="submit" aria-label="Ask" ${state.asking ? 'disabled' : ''}>${state.asking ? '<div class="spinner"></div>' : ICONS.send}</button>
       </form>
     </div>
   `;
@@ -353,15 +368,20 @@ function renderMessage(message) {
   const ungrounded = !isUser && message.grounded === false;
   const role = isUser ? 'You' : (ungrounded ? 'Not in document' : 'From the document');
   const citations = (message.citations || []).filter((c) => c.quote);
+  const avatar = isUser
+    ? `<div class="avatar avatar-user" aria-hidden="true">U</div>`
+    : `<div class="avatar avatar-assistant" aria-hidden="true">TL</div>`;
 
   return `
-    <div class="message ${isUser ? 'user' : ''} ${ungrounded ? 'ungrounded' : ''}">
-      <div class="message-role">${escapeHtml(role)}</div>
-      <div>${escapeHtml(message.text || '')}</div>
-      ${citations.length ? `
-        <div class="citations">
-          ${citations.map((c) => `<button class="citation-chip" data-action="open-citation" data-section-index="${escapeAttribute(c.sectionIndex ?? '')}" title="${escapeAttribute(c.quote)}">${escapeHtml(truncate(c.quote, 60))}</button>`).join('')}
-        </div>` : ''}
+    <div class="message ${isUser ? 'user' : ''} ${ungrounded ? 'ungrounded' : ''}" aria-label="${escapeAttribute(role)}">
+      ${avatar}
+      <div class="message-bubble">
+        <div>${escapeHtml(message.text || '')}</div>
+        ${citations.length ? `
+          <div class="citations">
+            ${citations.map((c) => `<button class="citation-chip" data-action="open-citation" data-section-index="${escapeAttribute(c.sectionIndex ?? '')}" title="${escapeAttribute(c.quote)}">${escapeHtml(truncate(c.quote, 60))}</button>`).join('')}
+          </div>` : ''}
+      </div>
     </div>
   `;
 }
@@ -422,9 +442,9 @@ function renderSettings() {
       ${state.modelListError ? `<div class="test-result error">${escapeHtml(state.modelListError)}</div>` : ''}
 
       <div class="btn-row" style="margin-top: var(--space-3)">
-        <button class="btn-primary" data-action="save-config">Save</button>
-        <button class="btn-secondary" data-action="refresh-models">${state.modelListLoading ? 'Loading…' : 'Refresh models'}</button>
-        <button class="btn-secondary" data-action="test-key" ${state.testing ? 'disabled' : ''}>${state.testing ? 'Testing…' : 'Test key'}</button>
+        <button class="btn-primary" data-action="save-config">${ICONS.check}<span>Save</span></button>
+        <button class="btn-secondary" data-action="refresh-models">${state.modelListLoading ? '<div class="spinner" style="border-color:rgba(139,92,246,0.3);border-top-color:var(--accent)"></div><span>Loading…</span>' : `${ICONS.refresh}<span>Refresh models</span>`}</button>
+        <button class="btn-secondary" data-action="test-key" ${state.testing ? 'disabled' : ''}>${state.testing ? '<div class="spinner" style="border-color:rgba(139,92,246,0.3);border-top-color:var(--accent)"></div><span>Testing…</span>' : `${ICONS.zap}<span>Test key</span>`}</button>
       </div>
 
       ${renderTestResult()}
@@ -447,7 +467,6 @@ function renderSettings() {
       <ul class="key-points">
         <li>Your API key is stored locally in this browser profile only.</li>
         <li>Page text is sent to your selected provider over HTTPS only when you click Analyze.</li>
-        <li>Nothing is sent to Anthropic, the extension author, or any third party.</li>
         <li>Don't install on a shared computer where you don't trust other extensions.</li>
       </ul>
     </div>
