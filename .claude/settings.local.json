@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"C:\\\\codex\\\\wooo\\\\AIterm\\\\\" -Recurse | Where-Object { -not $_.PSIsContainer } | Select-Object FullName, Length | Sort-Object FullName)"
+    ]
+  }
+}

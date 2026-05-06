@@ -1,137 +1,106 @@
 # Terms Lens
 
-Terms Lens is a Chrome extension that detects Terms, Privacy, and other policy pages, opens a native side panel, summarizes the document, highlights consumer risks, and answers follow-up questions with clause citations.
+Chrome extension that detects Terms, Privacy, and policy pages, shows a signup-page popup, fetches linked policy documents, and answers follow-up questions with grounded clause citations — **no server needed**.
 
 ## What It Does
 
-- Detects likely legal and policy pages in the current tab
-- Extracts structured sections from the page instead of flattening the whole document
-- Sends extracted clauses to the backend for analysis
-- Shows a summary, risk cards, key points, and grounded Q&A
-- Lets you click citations to jump back to the relevant clause on the page
-
-## Project Structure
-
-- `manifest.json`, `background.js`, `content.js`
-  Chrome extension shell, detection, extraction, and tab/session orchestration
-- `sidepanel.html`, `sidepanel.css`, `sidepanel.js`
-  Side panel UI
-- `server.py`, `analysis_engine.py`
-  Backend API and analysis pipeline
-- `tests/`
-  Backend and contract tests
+- Detects signup forms and nearby T&C links on any page (Instagram, Reddit, GitHub, Substack, etc.)
+- Shows a floating "Review terms before signing up" prompt near the form
+- One click opens the side panel, fetches the linked policy page, and runs AI analysis
+- Summarises the document in plain English — key points, risk cards with severity, verbatim source quotes
+- Answers follow-up questions strictly from the policy text (no hallucinated answers)
+- Handles huge documents (Google ToS, Meta ToS, AWS) via parallel map-reduce chunking
+- Works entirely from your browser with your own Groq or Gemini API key
 
 ## Requirements
 
-- Python 3.11+
-- Google Chrome
-- Optional: an `OPENAI_API_KEY` or `GROQ_API_KEY` for model-backed responses
+- Google Chrome 116+
+- A free [Groq](https://console.groq.com/keys) or [Google AI Studio](https://aistudio.google.com/app/apikey) API key
 
-## How To Run
+No Python. No server. No `.env` file.
 
-### 1. Install Python dependencies
+## Install
 
-From the project root:
-
-```bash
-python -m pip install -r requirements.txt
-```
-
-### 2. Configure environment variables
-
-Copy the example env file:
-
-```bash
-copy .env.example .env
-```
-
-Then edit `.env`.
-
-You can use either OpenAI or Groq.
-
-For OpenAI:
-
-```env
-OPENAI_API_KEY=your_key_here
-OPENAI_MODEL=gpt-4.1-mini
-```
-
-For Groq:
-
-```env
-GROQ_API_KEY=your_key_here
-GROQ_MODEL=openai/gpt-oss-20b
-GROQ_BASE_URL=https://api.groq.com/openai/v1
-```
-
-Provider priority is:
-
-1. `GROQ_API_KEY`
-2. `OPENAI_API_KEY`
-3. heuristic fallback
-
-If neither API key is set, the app still runs using the built-in heuristic fallback.
-
-### 3. Start the backend
-
-Run:
-
-```bash
-python server.py
-```
-
-The backend starts on:
-
-```text
-http://127.0.0.1:5000
-```
-
-You can check it with:
-
-```bash
-curl http://127.0.0.1:5000/health
-```
-
-### 4. Load the extension in Chrome
+### 1. Load unpacked
 
 1. Open `chrome://extensions`
-2. Enable `Developer mode`
-3. Click `Load unpacked`
-4. Select this project folder: `c:\codex\AIterm`
+2. Enable **Developer mode** (top-right toggle)
+3. Click **Load unpacked**
+4. Select this folder: `C:\codex\wooo\AIterm`
 
-### 5. Use the extension
+### 2. Add your API key
 
-1. Open any `http` or `https` page with Terms, Privacy, Refund, Cookie, or similar policy text
-2. Click the Terms Lens extension icon, or use the in-page badge if it appears
-3. In the side panel, click `Analyze this page`
-4. Review the summary and risk cards
-5. Ask follow-up questions in the Q&A section
-6. Click citation chips to jump to the matching clause on the page
+1. Click the Terms Lens icon in the Chrome toolbar → side panel opens
+2. Click **⚙ Settings**
+3. Choose **Groq** or **Gemini**
+4. Paste your API key — the model list loads automatically from the provider
+5. Pick an **Analysis model** (higher quality) and a **Chat model** (faster)
+6. Click **Test key** → green pill means it works
+7. Click **Save**
 
-## Default Behavior
+Free tier is enough. Groq gives ~500k tokens/day free; Gemini gives generous free-tier access.
 
-- Backend URL defaults to `http://127.0.0.1:5000`
-- Raw page text is kept in extension session storage by default
-- Follow-up analysis context is stored in backend memory while the backend process is running
-- If the backend restarts, active analysis sessions are cleared
+## Usage
 
-## Running Tests
+### Signup pages
 
-Run:
+Navigate to any signup page (Instagram, X, Reddit, LinkedIn, Substack, GitHub…).
 
-```bash
-python -m pytest
+- A floating card appears near the form: **"Review terms before signing up"**
+- Click **Review** → side panel opens, fetches the linked Terms/Privacy page, and analyzes it
+- Read the summary, key points, and risk cards
+- Ask follow-up questions — answers cite verbatim quotes from the document
+
+### Policy pages directly
+
+Open any Terms or Privacy page and click the Terms Lens extension icon.
+
+Click **Analyze policy** to fetch and summarize.
+
+### Large documents
+
+For docs over ~100k characters (Google ToS, AWS Customer Agreement):
+
+- Extension shows a progress bar: **"Analyzing 3 / 12 sections…"**
+- Sections are analyzed in parallel then merged into a single coherent summary
+- Q&A still works — relevant sections are retrieved by keyword search
+
+## Project Layout
+
 ```
+AIterm/
+├── manifest.json          Chrome MV3 manifest
+├── background.js          Service worker — LLM calls, analysis orchestration, tab state
+├── content.js             Content script — page detection, signup form popup, inline extraction
+├── sidepanel.html/css/js  Side panel UI
+└── shared/
+    ├── config.js          Storage keys, defaults, TTL constants
+    ├── llm-client.js      Groq + Gemini API abstraction, model listing, JSON parse
+    ├── prompts.js         System prompts for analyzer, map, reduce, Q&A
+    ├── long-doc.js        Tiered analysis: single-pass / map-reduce, BM25 Q&A retrieval
+    └── policy-fetch.js    Two-stage fetch: direct HTTP + hidden-tab fallback for SPAs
+```
+
+## Privacy & Security
+
+- Your API key is stored in `chrome.storage.local` — local to your browser profile only
+- Page text is sent to your selected provider (Groq or Gemini) over HTTPS **only when you click Analyze**
+- Nothing is sent to any third party, analytics service, or the extension author
+- Do not install on a shared computer where you don't trust other extensions (any extension with the `storage` permission can read local storage on the same profile)
 
 ## Troubleshooting
 
-- If the side panel opens but analysis fails, make sure `python server.py` is still running
-- If Chrome does not reflect code changes, reload the extension from `chrome://extensions`
-- If model-backed output is not being used, check that `.env` contains a valid `GROQ_API_KEY` or `OPENAI_API_KEY`
-- If you see no badge on a page, open the extension manually from the toolbar and run analysis anyway
+| Symptom | Fix |
+|---------|-----|
+| Side panel shows "Add your API key" | Open Settings → paste key → Save |
+| Model dropdown empty | Paste API key first, then click "Refresh model list" |
+| "Provider rejected your API key" | Check key is valid and not expired |
+| Floating popup doesn't appear | Check Settings → "Show floating prompt on signup pages" is on |
+| Fetch fails on some T&C pages | Extension retries via a background tab (handles Cloudflare/SPAs) |
+| Analysis returns "insufficient text" | Open the actual T&C page directly and click Analyze |
 
 ## Notes
 
-- This is Chrome-first and has not been fully validated on other Chromium browsers
-- The backend currently uses in-memory session storage, not a database
-- Outputs are informational and should not be treated as legal advice
+- Chrome 116+ required for `chrome.sidePanel` API
+- Extension is read-only — it never modifies any page, never submits forms
+- Analysis output is informational and should not be treated as legal advice

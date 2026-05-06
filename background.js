@@ -1,25 +1,41 @@
 import {
-  DEFAULT_PREFS,
+  DEFAULT_LLM_CONFIG,
+  DEFAULT_UI_PREFS,
   HIGH_CONFIDENCE_THRESHOLD,
+  MODEL_CACHE_TTL_MS,
   PAGE_TYPE_LABELS,
+  POLICY_CACHE_TTL_MS,
   STORAGE_KEYS,
 } from './shared/config.js';
+import {
+  callLLM,
+  listModels,
+  parseJsonContent,
+  pickRecommendedModel,
+  PROVIDERS,
+} from './shared/llm-client.js';
+import {
+  buildLexicalIndex,
+  estimateTokens,
+  runLongDocAnalysis,
+  topSections,
+} from './shared/long-doc.js';
+import { fetchPolicyContent } from './shared/policy-fetch.js';
+import { buildQAMessages } from './shared/prompts.js';
 
-const ANALYSIS_SCHEMA_VERSION = 2;
-const HTML_TEXT_TAGS = ['h1', 'h2', 'h3', 'h4', 'p', 'li', 'td', 'th', 'blockquote'];
-const POLICY_TAG_HINT = /(terms|conditions|privacy|cookies?|policy|legal|consent|refund|billing|acceptable use|eula)/i;
+const SCHEMA_VERSION = 3;
 
 chrome.runtime.onInstalled.addListener(async () => {
-  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-  await ensurePrefs();
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  await ensureDefaults();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
-  await ensurePrefs();
+  await ensureDefaults();
 });
 
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  await inspectTab(tabId);
+  await inspectTab(tabId).catch((e) => console.debug('Terms Lens inspect:', e?.message));
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -27,9 +43,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await clearTabState(tabId);
     return;
   }
-
   if (changeInfo.status === 'complete' || changeInfo.url) {
-    await inspectTab(tabId, tab);
+    await inspectTab(tabId, tab).catch((e) => console.debug('Terms Lens inspect:', e?.message));
   }
 });
 
@@ -39,12 +54,13 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender)
-    .then((result) => sendResponse({ ok: true, ...result }))
+    .then((result) => sendResponse({ ok: true, ...(result || {}) }))
     .catch((error) => {
       console.error('Terms Lens error:', error);
       sendResponse({
         ok: false,
         error: error.message || 'Unknown error',
+        code: error.code || null,
       });
     });
   return true;
@@ -54,10 +70,21 @@ async function handleMessage(message, sender) {
   switch (message.type) {
     case 'OPEN_SIDE_PANEL': {
       const tabId = sender.tab?.id ?? message.tabId;
-      if (!tabId) {
-        throw new Error('Missing tabId');
-      }
+      if (!tabId) throw new Error('Missing tabId');
       await chrome.sidePanel.open({ tabId });
+      return {};
+    }
+    case 'OPEN_PANEL_AND_ANALYZE': {
+      const tabId = sender.tab?.id ?? message.tabId;
+      if (!tabId) throw new Error('Missing tabId');
+      await chrome.sidePanel.open({ tabId });
+      await updateTabState(tabId, {
+        pendingLinkUrl: message.linkUrl || null,
+        pendingTrigger: 'signup-popup',
+      });
+      runAnalysis(tabId, { preferredLinkUrl: message.linkUrl || null }).catch((error) => {
+        console.error('Auto-analysis failed:', error);
+      });
       return {};
     }
     case 'GET_PANEL_STATE': {
@@ -75,60 +102,95 @@ async function handleMessage(message, sender) {
     case 'OPEN_CITATION': {
       const tabId = await resolveActiveTabId(message.tabId);
       const state = await readTabState(tabId);
+      const sectionIndex = typeof message.sectionIndex === 'number' ? message.sectionIndex : null;
       if (state?.analysisSource?.type === 'linked-policy-fetch' && state.analysisSource.url) {
         await chrome.tabs.create({ url: state.analysisSource.url });
         return {};
       }
-      await ensureContentScript(tabId);
-      await chrome.tabs.sendMessage(tabId, {
-        type: 'JUMP_TO_CITATION',
-        clauseId: message.clauseId,
-      });
-      await updateTabState(tabId, { activeClauseId: message.clauseId });
-      await broadcastState(tabId);
+      if (sectionIndex !== null) {
+        await ensureContentScript(tabId);
+        await chrome.tabs.sendMessage(tabId, {
+          type: 'JUMP_TO_SECTION',
+          sectionIndex,
+        }).catch(() => {});
+      }
       return {};
     }
-    case 'SAVE_PREFS': {
-      const prefs = await getPrefs();
-      const nextPrefs = {
-        ...prefs,
-        ...message.prefs,
-      };
-      await chrome.storage.local.set({ [STORAGE_KEYS.localPrefs]: nextPrefs });
-      return { prefs: nextPrefs };
+    case 'SAVE_LLM_CONFIG': {
+      const config = await getLlmConfig();
+      const next = { ...config, ...(message.config || {}) };
+      await chrome.storage.local.set({ [STORAGE_KEYS.llmConfig]: next });
+      return { llmConfig: next };
+    }
+    case 'SAVE_UI_PREFS': {
+      const prefs = await getUiPrefs();
+      const next = { ...prefs, ...(message.prefs || {}) };
+      await chrome.storage.local.set({ [STORAGE_KEYS.uiPrefs]: next });
+      return { uiPrefs: next };
+    }
+    case 'LIST_MODELS': {
+      const config = await getLlmConfig();
+      const provider = message.provider || config.provider;
+      const apiKey = message.apiKey || config.apiKey;
+      const baseUrlOverride = message.baseUrlOverride ?? config.baseUrlOverride;
+      const force = !!message.force;
+      const result = await getModelList({ provider, apiKey, baseUrlOverride, force });
+      return result;
+    }
+    case 'TEST_KEY': {
+      const config = await getLlmConfig();
+      const provider = message.provider || config.provider;
+      const apiKey = message.apiKey || config.apiKey;
+      const model = message.model || config.analysisModel;
+      const baseUrlOverride = message.baseUrlOverride ?? config.baseUrlOverride;
+      try {
+        const response = await callLLM({
+          provider,
+          apiKey,
+          model,
+          baseUrlOverride,
+          messages: [{ role: 'user', content: 'Reply with the single word OK.' }],
+          maxTokens: 5,
+          temperature: 0,
+        });
+        return { success: true, sample: response.content?.trim().slice(0, 50) || '', usage: response.usage };
+      } catch (error) {
+        return { success: false, error: error.message, code: error.code || null };
+      }
     }
     default:
       throw new Error(`Unsupported message type: ${message.type}`);
   }
 }
 
-async function ensurePrefs() {
-  const prefs = await getPrefs();
-  if (!prefs.apiBaseUrl) {
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.localPrefs]: { ...DEFAULT_PREFS, ...prefs },
-    });
+async function ensureDefaults() {
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.llmConfig, STORAGE_KEYS.uiPrefs]);
+  const updates = {};
+  if (!stored[STORAGE_KEYS.llmConfig]) {
+    updates[STORAGE_KEYS.llmConfig] = { ...DEFAULT_LLM_CONFIG };
+  }
+  if (!stored[STORAGE_KEYS.uiPrefs]) {
+    updates[STORAGE_KEYS.uiPrefs] = { ...DEFAULT_UI_PREFS };
+  }
+  if (Object.keys(updates).length) {
+    await chrome.storage.local.set(updates);
   }
 }
 
-async function getPrefs() {
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.localPrefs);
-  return {
-    ...DEFAULT_PREFS,
-    ...(stored[STORAGE_KEYS.localPrefs] || {}),
-  };
+async function getLlmConfig() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.llmConfig);
+  return { ...DEFAULT_LLM_CONFIG, ...(stored[STORAGE_KEYS.llmConfig] || {}) };
+}
+
+async function getUiPrefs() {
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.uiPrefs);
+  return { ...DEFAULT_UI_PREFS, ...(stored[STORAGE_KEYS.uiPrefs] || {}) };
 }
 
 async function resolveActiveTabId(tabId) {
-  if (tabId) {
-    return tabId;
-  }
-
+  if (tabId) return tabId;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) {
-    throw new Error('No active tab found');
-  }
-
+  if (!tab?.id) throw new Error('No active tab found');
   return tab.id;
 }
 
@@ -151,31 +213,25 @@ async function writeTabState(tabId, value) {
 
 async function clearTabState(tabId) {
   await chrome.storage.session.remove(tabStateKey(tabId));
-  await chrome.sidePanel.setOptions({
-    tabId,
-    enabled: false,
-    path: 'sidepanel.html',
-  }).catch(() => {});
 }
 
 async function updateTabState(tabId, patch) {
   const current = (await readTabState(tabId)) || {};
-  const next = {
-    ...current,
-    ...patch,
-  };
+  const next = { ...current, ...patch };
   await writeTabState(tabId, next);
   return next;
 }
 
 async function inspectTab(tabId, tab = null) {
-  const resolvedTab = tab || (await chrome.tabs.get(tabId));
+  const resolvedTab = tab || (await chrome.tabs.get(tabId).catch(() => null));
   const url = resolvedTab?.url || '';
 
   if (!isHttpUrl(url)) {
     await clearTabState(tabId);
     return;
   }
+
+  await chrome.sidePanel.setOptions({ tabId, enabled: true, path: 'sidepanel.html' }).catch(() => {});
 
   await ensureContentScript(tabId);
 
@@ -192,37 +248,24 @@ async function inspectTab(tabId, tab = null) {
       url,
       hasInlineLegalText: false,
       hasLegalLinks: false,
-      bestPolicySource: 'current-page',
       linkedPolicies: [],
+      signupForms: [],
     };
   }
 
   const previous = await readTabState(tabId);
   const state = await updateTabState(tabId, {
-    schemaVersion: ANALYSIS_SCHEMA_VERSION,
+    schemaVersion: SCHEMA_VERSION,
     url,
     title: resolvedTab?.title || detection.title || '',
     detection,
     analysis: previous?.analysis || null,
-    extraction: previous?.extraction || null,
     analysisSource: previous?.analysisSource || null,
-    linkedPolicyCandidates: detection.linkedPolicies || [],
-    linkedPolicyCache: previous?.linkedPolicyCache || {},
-    analysisStatus: detection.isLegalPage || detection.hasLegalLinks ? (previous?.analysis ? 'ready' : 'idle') : 'not-legal',
+    analysisSections: previous?.analysisSections || null,
+    analysisStatus: previous?.analysis ? 'ready' : (detection.isLegalPage || detection.hasLegalLinks || (detection.signupForms || []).length ? 'idle' : 'not-legal'),
     lastError: null,
-    activeClauseId: previous?.activeClauseId || null,
+    progress: null,
   });
-
-  await chrome.sidePanel.setOptions({
-    tabId,
-    enabled: true,
-    path: 'sidepanel.html',
-  });
-
-  const prefs = await getPrefs();
-  if ((detection.isLegalPage || detection.hasLegalLinks) && detection.confidence >= HIGH_CONFIDENCE_THRESHOLD && prefs.autoOpen) {
-    await chrome.sidePanel.open({ tabId });
-  }
 
   await broadcastState(tabId, state);
 }
@@ -230,587 +273,386 @@ async function inspectTab(tabId, tab = null) {
 async function ensureContentScript(tabId) {
   try {
     await chrome.tabs.sendMessage(tabId, { type: 'PING' });
-    return;
   } catch (_error) {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ['content.js'],
-    });
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content.js'],
+      });
+    } catch (e) {
+      console.debug('content script inject failed:', e?.message);
+    }
   }
 }
 
 async function buildPanelState(tabId) {
-  const prefs = await getPrefs();
-  const state = await readTabState(tabId);
-  const tab = await chrome.tabs.get(tabId);
+  const [llmConfig, uiPrefs, state, modelCache] = await Promise.all([
+    getLlmConfig(),
+    getUiPrefs(),
+    readTabState(tabId),
+    chrome.storage.local.get(STORAGE_KEYS.modelCache).then((r) => r[STORAGE_KEYS.modelCache] || {}),
+  ]);
+
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
 
   return {
     tabId,
-    prefs,
+    llmConfig: { ...llmConfig, apiKey: llmConfig.apiKey ? '*'.repeat(Math.min(llmConfig.apiKey.length, 12)) : '' },
+    apiKeyConfigured: !!llmConfig.apiKey,
+    uiPrefs,
     page: state || {
-      schemaVersion: ANALYSIS_SCHEMA_VERSION,
+      schemaVersion: SCHEMA_VERSION,
       url: tab?.url || '',
       title: tab?.title || '',
       detection: null,
-      extraction: null,
       analysis: null,
       analysisSource: null,
-      linkedPolicyCandidates: [],
       analysisStatus: 'idle',
       lastError: null,
-      activeClauseId: null,
+      progress: null,
     },
     labels: PAGE_TYPE_LABELS,
+    providers: Object.fromEntries(Object.entries(PROVIDERS).map(([key, value]) => [key, {
+      label: value.label,
+      keyHelpUrl: value.keyHelpUrl,
+      defaultBaseUrl: value.defaultBaseUrl,
+    }])),
+    modelCache: modelCache[llmConfig.provider] || null,
   };
 }
 
-async function runAnalysis(tabId) {
-  const current = await readTabState(tabId);
-  const tab = await chrome.tabs.get(tabId);
+async function getModelList({ provider, apiKey, baseUrlOverride, force }) {
+  const cacheStore = await chrome.storage.local.get(STORAGE_KEYS.modelCache);
+  const cache = cacheStore[STORAGE_KEYS.modelCache] || {};
+  const cacheKey = provider;
+  const cached = cache[cacheKey];
+  const now = Date.now();
 
+  if (!force && cached && now - cached.fetchedAt < MODEL_CACHE_TTL_MS && cached.models?.length) {
+    return { models: cached.models, recommendedAnalysis: pickRecommendedModel(provider, cached.models, 'analysis'), recommendedChat: pickRecommendedModel(provider, cached.models, 'chat'), cached: true };
+  }
+
+  if (!apiKey) {
+    return { models: [], recommendedAnalysis: '', recommendedChat: '', cached: false, error: 'API key not set' };
+  }
+
+  const models = await listModels({ provider, apiKey, baseUrlOverride });
+  cache[cacheKey] = { models, fetchedAt: now };
+  await chrome.storage.local.set({ [STORAGE_KEYS.modelCache]: cache });
+
+  return {
+    models,
+    recommendedAnalysis: pickRecommendedModel(provider, models, 'analysis'),
+    recommendedChat: pickRecommendedModel(provider, models, 'chat'),
+    cached: false,
+  };
+}
+
+async function runAnalysis(tabId, options = {}) {
+  const llmConfig = await getLlmConfig();
+  if (!llmConfig.apiKey) {
+    const errorState = await updateTabState(tabId, {
+      analysisStatus: 'error',
+      lastError: 'Add your API key in settings to start analyzing.',
+      progress: null,
+    });
+    await broadcastState(tabId, errorState);
+    throw new Error('API key missing');
+  }
+  if (!llmConfig.analysisModel) {
+    const errorState = await updateTabState(tabId, {
+      analysisStatus: 'error',
+      lastError: 'Pick an analysis model in settings.',
+      progress: null,
+    });
+    await broadcastState(tabId, errorState);
+    throw new Error('Analysis model missing');
+  }
+
+  const tab = await chrome.tabs.get(tabId);
   if (!tab?.url || !isHttpUrl(tab.url)) {
     throw new Error('Analysis is only available on HTTP(S) pages.');
   }
 
-  await ensureContentScript(tabId);
-  const extraction = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_PAGE' });
-  const linkedPolicyCandidates = extraction.linkedPolicies || [];
-
   await updateTabState(tabId, {
-    extraction,
-    linkedPolicyCandidates,
-    analysisStatus: 'loading',
+    analysisStatus: 'fetching',
     lastError: null,
+    progress: null,
   });
   await broadcastState(tabId);
 
-  const { sourceInput, analysisSource, updatedCache, fallbackError } = await resolveAnalysisInput(
-    tab.url,
-    extraction,
-    current?.linkedPolicyCache || {},
-  );
-
-  if (!sourceInput || !sourceInput.sections?.length) {
-    const noContentMessage = linkedPolicyCandidates.length
-      ? (fallbackError || 'Policy links were found, but Terms Lens could not extract usable content from this page or its linked policy pages.')
-      : 'No usable policy sections were found on this page.';
+  await ensureContentScript(tabId);
+  let extraction;
+  try {
+    extraction = await chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_PAGE' });
+  } catch (error) {
     const errorState = await updateTabState(tabId, {
-      detection: extraction.detection,
-      extraction,
-      linkedPolicyCandidates,
-      linkedPolicyCache: updatedCache,
-      analysisSource: null,
       analysisStatus: 'error',
-      lastError: noContentMessage,
+      lastError: 'Could not read this page. Try reloading the tab.',
     });
     await broadcastState(tabId, errorState);
-    throw new Error(noContentMessage);
-  }
-
-  const prefs = await getPrefs();
-
-  try {
-    const response = await fetch(`${prefs.apiBaseUrl.replace(/\/$/, '')}/v1/analyze-page`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url: sourceInput.url,
-        metadata: sourceInput.metadata,
-        sections: sourceInput.sections,
-        detection: sourceInput.detection,
-        sourceContext: analysisSource.type,
-        originPageUrl: tab.url,
-      }),
-    });
-
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload.error || 'Analysis request failed');
-    }
-
-    const nextState = await updateTabState(tabId, {
-      detection: extraction.detection,
-      extraction,
-      analysisStatus: 'ready',
-      analysis: payload,
-      analysisSource,
-      linkedPolicyCandidates,
-      linkedPolicyCache: updatedCache,
-      lastError: null,
-      activeClauseId: null,
-    });
-
-    await broadcastState(tabId, nextState);
-    return { analysis: payload };
-  } catch (error) {
-    const nextState = await updateTabState(tabId, {
-      detection: extraction.detection,
-      extraction,
-      linkedPolicyCandidates,
-      linkedPolicyCache: updatedCache,
-      analysisSource,
-      analysisStatus: 'error',
-      lastError: error.message || 'Analysis failed',
-    });
-    await broadcastState(tabId, nextState);
     throw error;
   }
-}
 
-async function resolveAnalysisInput(originPageUrl, extraction, cache) {
-  const updatedCache = { ...cache };
-  const candidateList = rankLinkedPolicies(extraction.linkedPolicies || []);
+  const linkedPolicies = extraction.linkedPolicies || [];
+  const preferredLinkUrl = options.preferredLinkUrl;
+  const orderedPolicies = preferredLinkUrl
+    ? [{ url: preferredLinkUrl, label: 'Selected policy', pageType: 'terms', confidence: 0.95, sameOrigin: true }, ...linkedPolicies.filter((p) => p.url !== preferredLinkUrl)]
+    : rankLinkedPolicies(linkedPolicies);
 
-  if (!candidateList.length && extraction.sections?.length) {
-    return {
-      sourceInput: extraction,
-      analysisSource: describeCurrentSource(extraction),
-      updatedCache,
-      fallbackError: null,
-    };
-  }
+  let sourceSections = null;
+  let analysisSource = null;
+  let fetchedTitle = '';
 
-  const fetchedInputs = [];
-  const usedPolicies = [];
-
-  for (const policy of candidateList) {
-    const cached = updatedCache[policy.url];
-    if (cached?.sections?.length) {
-      fetchedInputs.push(cached);
-      usedPolicies.push(policy);
-      continue;
+  for (const policy of orderedPolicies) {
+    const cacheKey = policyCacheKey(policy.url);
+    const cacheStore = await chrome.storage.session.get(cacheKey);
+    const cached = cacheStore[cacheKey];
+    if (cached && Date.now() - cached.fetchedAt < POLICY_CACHE_TTL_MS && cached.sections?.length) {
+      sourceSections = cached.sections;
+      fetchedTitle = cached.title || policy.label || '';
+      analysisSource = {
+        type: 'linked-policy-fetch',
+        url: policy.url,
+        label: policy.label || 'Linked policy',
+        pageType: policy.pageType || 'terms',
+        originPageUrl: tab.url,
+        cached: true,
+      };
+      break;
     }
 
     try {
-      const fetched = await fetchLinkedPolicyExtraction(policy, originPageUrl);
-      if (fetched?.sections?.length) {
-        updatedCache[policy.url] = fetched;
-        fetchedInputs.push(fetched);
-        usedPolicies.push(policy);
-      } else {
-        updatedCache[policy.url] = { error: true };
+      const fetched = await fetchPolicyContent({ url: policy.url, originPageUrl: tab.url });
+      if (fetched.sections.length) {
+        await chrome.storage.session.set({ [cacheKey]: { ...fetched, fetchedAt: Date.now() } });
+        sourceSections = fetched.sections;
+        fetchedTitle = fetched.title || policy.label || '';
+        analysisSource = {
+          type: 'linked-policy-fetch',
+          url: policy.url,
+          label: policy.label || 'Linked policy',
+          pageType: policy.pageType || 'terms',
+          originPageUrl: tab.url,
+          fetchSource: fetched.source,
+        };
+        break;
       }
-    } catch (_error) {
-      updatedCache[policy.url] = { error: true };
+    } catch (error) {
+      console.debug('Policy fetch failed:', policy.url, error.message);
     }
   }
 
-  if (fetchedInputs.length) {
-    const merged = mergeLinkedPolicyInputs(fetchedInputs, usedPolicies, originPageUrl, extraction);
-    return {
-      sourceInput: merged,
-      analysisSource: {
-        type: 'linked-policy-fetch',
-        label: usedPolicies.length > 1 ? 'linked policy pages' : (usedPolicies[0].label || usedPolicies[0].pageType),
-        pageType: chooseMergedPageType(usedPolicies, extraction.detection?.pageType),
-        url: usedPolicies.map((policy) => policy.url).join(', '),
-        originPageUrl,
-        count: usedPolicies.length,
-      },
-      updatedCache,
-      fallbackError: null,
-    };
-  }
-
-  if (extraction.sections?.length) {
-    return {
-      sourceInput: extraction,
-      analysisSource: describeCurrentSource(extraction),
-      updatedCache,
-      fallbackError: 'Linked policy pages were found but could not be fetched. Terms Lens fell back to the visible page.',
-    };
-  }
-
-  return {
-    sourceInput: null,
-    analysisSource: null,
-    updatedCache,
-    fallbackError: 'Policy links were found but none of the linked pages produced usable policy content.',
-  };
-}
-
-function describeCurrentSource(extraction) {
-  const sourceHints = extraction.sourceHints || [];
-  if (sourceHints.includes('cookie-banner') || sourceHints.includes('modal') || extraction.detection?.bestPolicySource === 'current-page-inline') {
-    return {
-      type: 'current-page-inline',
-      label: extraction.detection?.pageType || 'inline policy',
+  if (!sourceSections && extraction.sections?.length) {
+    sourceSections = extraction.sections.map((section, index) => ({
+      id: section.id || `section-${index}`,
+      heading: section.heading || `Section ${index + 1}`,
+      text: section.text,
+      order: index,
+    }));
+    analysisSource = {
+      type: 'current-page',
+      url: tab.url,
+      label: extraction.title || tab.title || 'Current page',
       pageType: extraction.detection?.pageType || 'generic',
-      url: extraction.url,
-      originPageUrl: extraction.url,
+      originPageUrl: tab.url,
     };
+    fetchedTitle = extraction.title || tab.title || '';
   }
 
-  return {
-    type: 'current-page',
-    label: extraction.detection?.pageType || 'current page',
-    pageType: extraction.detection?.pageType || 'generic',
-    url: extraction.url,
-    originPageUrl: extraction.url,
-  };
-}
-
-function rankLinkedPolicies(policies) {
-  const list = [...(policies || [])];
-  list.sort((a, b) => {
-    if (a.sameOrigin !== b.sameOrigin) {
-      return a.sameOrigin ? -1 : 1;
-    }
-    return (b.confidence || 0) - (a.confidence || 0);
-  });
-  return list;
-}
-
-function mergeLinkedPolicyInputs(inputs, policies, originPageUrl, extraction) {
-  const sections = [];
-  const seenKeys = new Set();
-  let wordCount = 0;
-
-  inputs.forEach((input, index) => {
-    const policy = policies[index];
-    (input.sections || []).forEach((section) => {
-      const key = `${policy.url}:${section.heading}:${section.text.slice(0, 140)}`;
-      if (seenKeys.has(key)) {
-        return;
-      }
-      seenKeys.add(key);
-      sections.push({
-        ...section,
-        id: `${slugify(policy.pageType || 'policy')}-${section.id || sections.length + 1}`,
-        heading: policy.label ? `${policy.label}: ${section.heading}` : section.heading,
-        order: sections.length,
-      });
-      wordCount += section.text.split(/\s+/).filter(Boolean).length;
+  if (!sourceSections || !sourceSections.length) {
+    const errorState = await updateTabState(tabId, {
+      analysisStatus: 'error',
+      lastError: linkedPolicies.length
+        ? 'Found policy links but could not extract usable text from them.'
+        : 'No policy text found on this page.',
+      progress: null,
     });
+    await broadcastState(tabId, errorState);
+    throw new Error('No usable policy text');
+  }
+
+  const totalChars = sourceSections.reduce((sum, s) => sum + (s.text || '').length, 0);
+  const tokenEstimate = estimateTokens(sourceSections.map((s) => s.text).join(' '));
+
+  await updateTabState(tabId, {
+    analysisStatus: 'analyzing',
+    progress: { stage: 'starting', completed: 0, total: 1, totalChars, tokenEstimate },
+    analysisSource,
   });
+  await broadcastState(tabId);
 
-  return {
-    url: originPageUrl,
-    title: extraction.title,
-    detection: {
-      ...extraction.detection,
-      isLegalPage: true,
-      hasLegalLinks: policies.length > 0,
-      bestPolicySource: 'linked-policy-fetch',
-      pageType: chooseMergedPageType(policies, extraction.detection?.pageType),
-    },
-    metadata: {
-      locale: extraction.metadata?.locale || 'unknown',
-      wordCount,
-      extractedAt: new Date().toISOString(),
-      sectionCount: sections.length,
-    },
-    sections,
-    linkedPolicies: extraction.linkedPolicies || [],
-    sourceHints: ['linked-policy-fetch'],
-    originPageUrl,
-  };
-}
-
-function chooseMergedPageType(policies, fallbackType) {
-  const counts = {};
-  policies.forEach((policy) => {
-    counts[policy.pageType] = (counts[policy.pageType] || 0) + 1;
-  });
-  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-  return top?.[0] || fallbackType || 'generic';
-}
-
-async function fetchLinkedPolicyExtraction(policy, originPageUrl) {
-  const response = await fetch(policy.url, {
-    method: 'GET',
-    credentials: 'omit',
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${policy.url}`);
+  let analysisResult;
+  try {
+    analysisResult = await runLongDocAnalysis({
+      sections: sourceSections,
+      url: analysisSource.url,
+      title: fetchedTitle,
+      llmConfig,
+      onProgress: async (progress) => {
+        await updateTabState(tabId, {
+          progress: { ...progress, totalChars, tokenEstimate },
+        });
+        await broadcastState(tabId);
+      },
+    });
+  } catch (error) {
+    const errorState = await updateTabState(tabId, {
+      analysisStatus: 'error',
+      lastError: friendlyError(error),
+      progress: null,
+    });
+    await broadcastState(tabId, errorState);
+    throw error;
   }
 
-  const html = await response.text();
-  return extractPolicyFromHtml(html, policy, originPageUrl);
-}
-
-function extractPolicyFromHtml(html, policy, originPageUrl) {
-  if (typeof DOMParser !== 'undefined') {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    return extractPolicyFromDocument(doc, policy, originPageUrl);
+  if (analysisResult?.summary === 'insufficient_text') {
+    const errorState = await updateTabState(tabId, {
+      analysisStatus: 'error',
+      lastError: 'The fetched text was too short or unrelated to a policy. Try opening the actual T&C page.',
+      progress: null,
+    });
+    await broadcastState(tabId, errorState);
+    throw new Error('Insufficient text');
   }
 
-  return extractPolicyFromFallbackHtml(html, policy, originPageUrl);
-}
-
-function extractPolicyFromDocument(doc, policy, originPageUrl) {
-  doc.querySelectorAll('script, style, noscript, svg').forEach((node) => node.remove());
-  const root = doc.querySelector('main, article, [role="main"], .policy, .legal, .content') || doc.body;
-  const title = cleanText(doc.title || policy.label || '');
-  const sections = extractSectionsFromStaticRoot(root);
-  const text = cleanText(root?.innerText || '');
-  return {
-    url: policy.url,
-    title,
-    detection: {
-      isLegalPage: true,
-      pageType: policy.pageType || inferPolicyType(`${title} ${policy.url} ${text.slice(0, 1200)}`),
-      confidence: Math.max(0.72, policy.confidence || 0.72),
-      signals: ['linked-policy-fetch'],
-      title,
-      url: policy.url,
-      hasInlineLegalText: false,
-      hasLegalLinks: false,
-      bestPolicySource: 'linked-policy-fetch',
-      linkedPolicies: [],
-    },
-    metadata: {
-      locale: doc.documentElement?.lang || 'unknown',
-      wordCount: sections.reduce((total, section) => total + section.text.split(/\s+/).filter(Boolean).length, 0),
-      extractedAt: new Date().toISOString(),
-      sectionCount: sections.length,
-    },
-    sections,
-    linkedPolicies: [],
-    sourceHints: ['linked-policy-fetch'],
-    originPageUrl,
-  };
-}
-
-function extractPolicyFromFallbackHtml(html, policy, originPageUrl) {
-  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = cleanText(titleMatch ? stripHtml(titleMatch[1]) : policy.label || '');
-  const text = cleanText(stripHtml(html));
-  const sectionText = text.slice(0, 10000);
-  const sections = sectionText
-    ? [
-        {
-          id: 'linked-policy',
-          heading: title || 'Policy document',
-          text: sectionText,
-          order: 0,
-          citations: [],
-          jumpTarget: 'body',
-        },
-      ]
-    : [];
-
-  return {
-    url: policy.url,
-    title,
-    detection: {
-      isLegalPage: true,
-      pageType: policy.pageType || inferPolicyType(`${title} ${policy.url} ${sectionText.slice(0, 1200)}`),
-      confidence: Math.max(0.72, policy.confidence || 0.72),
-      signals: ['linked-policy-fetch-fallback'],
-      title,
-      url: policy.url,
-      hasInlineLegalText: false,
-      hasLegalLinks: false,
-      bestPolicySource: 'linked-policy-fetch',
-      linkedPolicies: [],
-    },
-    metadata: {
-      locale: 'unknown',
-      wordCount: sectionText.split(/\s+/).filter(Boolean).length,
-      extractedAt: new Date().toISOString(),
-      sectionCount: sections.length,
-    },
-    sections,
-    linkedPolicies: [],
-    sourceHints: ['linked-policy-fetch'],
-    originPageUrl,
-  };
-}
-
-function extractSectionsFromStaticRoot(root) {
-  if (!root) {
-    return [];
-  }
-
-  const nodes = Array.from(root.querySelectorAll(HTML_TEXT_TAGS.join(',')));
-  const sections = [];
-  let current = createStaticSection('Overview');
-  let order = 0;
-
-  for (const node of nodes) {
-    const text = cleanText(node.textContent || '');
-    if (!text) {
-      continue;
-    }
-
-    if (/^H[1-4]$/.test(node.tagName)) {
-      if (current.text.length >= 40) {
-        current.order = order++;
-        sections.push(current);
-      }
-      current = createStaticSection(text, buildStaticSelector(node));
-      continue;
-    }
-
-    const entry = {
-      clauseId: `${slugify(current.heading)}-${current.citations.length + 1}`,
-      text,
-      selector: buildStaticSelector(node),
-    };
-    current.citations.push(entry);
-    current.text += `${text}\n\n`;
-  }
-
-  if (current.text.length >= 40) {
-    current.order = order++;
-    sections.push(current);
-  }
-
-  return sections.slice(0, 60);
-}
-
-function createStaticSection(heading, jumpTarget = 'body') {
-  return {
-    id: slugify(heading),
-    heading,
-    text: '',
-    citations: [],
-    jumpTarget,
-    order: 0,
-  };
-}
-
-function buildStaticSelector(node) {
-  if (!node) {
-    return 'body';
-  }
-  if (node.id) {
-    return `#${escapeCss(node.id)}`;
-  }
-  const tag = node.tagName ? node.tagName.toLowerCase() : 'body';
-  return tag;
-}
-
-async function askFollowup(tabId, question) {
-  const trimmed = question.trim();
-  if (!trimmed) {
-    throw new Error('Question is required.');
-  }
-
-  const state = await readTabState(tabId);
-  if (!state?.analysis?.analysisId) {
-    throw new Error('Run an analysis before asking a question.');
-  }
-
-  const prefs = await getPrefs();
-  const response = await fetch(`${prefs.apiBaseUrl.replace(/\/$/, '')}/v1/ask-followup`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      analysisId: state.analysis.analysisId,
-      question: trimmed,
-      activeClauseId: state.activeClauseId || null,
-      visibleCitations: collectVisibleCitationIds(state.analysis),
-    }),
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || 'Question request failed');
-  }
-
-  const conversation = [
-    ...(state.analysis.conversation || []),
-    {
-      role: 'user',
-      text: trimmed,
-    },
-    {
-      role: 'assistant',
-      text: payload.answer,
-      citations: payload.citations || [],
-      grounded: payload.grounded,
-    },
-  ];
-
-  const nextAnalysis = {
-    ...state.analysis,
-    conversation,
+  const analysis = {
+    summary: analysisResult.summary || '',
+    keyPoints: Array.isArray(analysisResult.keyPoints) ? analysisResult.keyPoints : [],
+    risks: Array.isArray(analysisResult.risks) ? analysisResult.risks : [],
+    pageType: analysisResult.pageType || analysisSource.pageType || 'generic',
+    suggestedQuestions: Array.isArray(analysisResult.suggestedQuestions) ? analysisResult.suggestedQuestions : [],
+    conversation: [],
+    analysisId: `${tabId}-${Date.now()}`,
+    generatedAt: new Date().toISOString(),
+    sourceUrl: analysisSource.url,
+    diagnostics: analysisResult._mapDiagnostics || null,
   };
 
   const nextState = await updateTabState(tabId, {
-    analysis: nextAnalysis,
+    analysis,
+    analysisSections: sourceSections,
     analysisStatus: 'ready',
+    analysisSource,
+    progress: null,
     lastError: null,
   });
 
   await broadcastState(tabId, nextState);
-  return payload;
+  return { analysis };
 }
 
-function collectVisibleCitationIds(analysis) {
-  const citations = new Set();
-  for (const card of analysis.riskCards || []) {
-    for (const citation of card.citations || []) {
-      if (citation.clauseId) {
-        citations.add(citation.clauseId);
-      }
-    }
+async function askFollowup(tabId, question) {
+  const trimmed = (question || '').trim();
+  if (!trimmed) throw new Error('Question is required.');
+
+  const state = await readTabState(tabId);
+  if (!state?.analysis || !state.analysisSections?.length) {
+    throw new Error('Run an analysis before asking a question.');
   }
 
-  for (const citation of analysis.summaryCitations || []) {
-    if (citation.clauseId) {
-      citations.add(citation.clauseId);
-    }
+  const llmConfig = await getLlmConfig();
+  if (!llmConfig.apiKey) throw new Error('API key missing.');
+  const chatModel = llmConfig.chatModel || llmConfig.analysisModel;
+  if (!chatModel) throw new Error('Pick a chat model in settings.');
+
+  const index = buildLexicalIndex(state.analysisSections);
+  let excerpts = topSections(index, trimmed, 3).map((doc) => ({
+    sectionIndex: doc.index,
+    heading: doc.heading,
+    text: doc.text,
+  }));
+
+  if (!excerpts.length) {
+    excerpts = state.analysisSections.slice(0, 3).map((s, i) => ({
+      sectionIndex: i,
+      heading: s.heading,
+      text: s.text,
+    }));
   }
 
-  return Array.from(citations);
+  const conversation = state.analysis.conversation || [];
+  const history = conversation.slice(-6);
+
+  let response;
+  try {
+    response = await callLLM({
+      provider: llmConfig.provider,
+      apiKey: llmConfig.apiKey,
+      model: chatModel,
+      baseUrlOverride: llmConfig.baseUrlOverride,
+      messages: buildQAMessages({ question: trimmed, excerpts, history }),
+      jsonMode: true,
+      maxTokens: 800,
+      temperature: 0.2,
+    });
+  } catch (error) {
+    throw new Error(friendlyError(error));
+  }
+
+  let parsed;
+  try {
+    parsed = parseJsonContent(response.content);
+  } catch (_error) {
+    parsed = { answer: response.content, citations: [], grounded: false };
+  }
+
+  const nextConversation = [
+    ...conversation,
+    { role: 'user', text: trimmed },
+    {
+      role: 'assistant',
+      text: parsed.answer || '',
+      citations: Array.isArray(parsed.citations) ? parsed.citations : [],
+      grounded: parsed.grounded !== false,
+    },
+  ];
+
+  const nextAnalysis = { ...state.analysis, conversation: nextConversation };
+  const nextState = await updateTabState(tabId, {
+    analysis: nextAnalysis,
+    lastError: null,
+  });
+
+  await broadcastState(tabId, nextState);
+  return { answer: parsed.answer || '', citations: parsed.citations || [], grounded: parsed.grounded !== false };
+}
+
+function rankLinkedPolicies(policies) {
+  return [...(policies || [])].sort((a, b) => {
+    if (a.sameOrigin !== b.sameOrigin) return a.sameOrigin ? -1 : 1;
+    return (b.confidence || 0) - (a.confidence || 0);
+  });
+}
+
+function policyCacheKey(url) {
+  return `${STORAGE_KEYS.policyCachePrefix}${url}`;
 }
 
 async function broadcastState(tabId, state = null) {
   const payload = await buildPanelState(tabId);
-  payload.page = state || payload.page;
-  await chrome.runtime.sendMessage({
+  if (state) payload.page = state;
+  chrome.runtime.sendMessage({
     type: 'PANEL_STATE_UPDATED',
     tabId,
     payload,
   }).catch(() => {});
 }
 
-function inferPolicyType(text) {
-  if (/privacy|personal data|data policy/i.test(text)) return 'privacy';
-  if (/cookie|consent/i.test(text)) return 'cookies';
-  if (/refund|return|cancellation/i.test(text)) return 'refund';
-  if (/terms|conditions|service/i.test(text)) return 'terms';
-  return 'generic';
-}
-
-function stripHtml(html) {
-  return String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|section|article|li|h1|h2|h3|h4|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function cleanText(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim();
-}
-
-function slugify(value) {
-  return cleanText(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'policy';
-}
-
-function escapeCss(value) {
-  if (globalThis.CSS?.escape) {
-    return globalThis.CSS.escape(value);
+function friendlyError(error) {
+  if (!error) return 'Unknown error';
+  switch (error.code) {
+    case 'auth':
+      return 'Provider rejected your API key. Open settings and check it.';
+    case 'rate_limit':
+      return 'Provider is rate-limiting. Wait a few seconds and try again.';
+    case 'network':
+      return `Network error: ${error.message}`;
+    case 'parse':
+      return 'Model returned an unreadable response. Try a different model in settings.';
+    case 'config':
+      return error.message;
+    default:
+      return error.message || 'Analysis failed.';
   }
-  return String(value).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
 }

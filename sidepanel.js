@@ -1,18 +1,28 @@
-import { PAGE_TYPE_LABELS } from './shared/config.js';
-
 const state = {
   tabId: null,
-  prefs: {},
+  llmConfig: null,
+  apiKeyConfigured: false,
+  uiPrefs: {},
   page: null,
-  labels: PAGE_TYPE_LABELS,
+  labels: {},
+  providers: {},
+  modelCache: null,
   asking: false,
+  view: 'main',
+  modelList: [],
+  modelListLoading: false,
+  modelListError: null,
+  testResult: null,
+  testing: false,
+  draftConfig: null,
+  showApiKey: false,
 };
 
 const app = document.getElementById('app');
 
 bootstrap().catch((error) => {
   console.error('Failed to start Terms Lens panel:', error);
-  app.innerHTML = `<div class="shell"><section class="error-state"><h2>Panel failed to load</h2><p>${escapeHtml(error.message || 'Unknown error')}</p></section></div>`;
+  app.innerHTML = `<div class="shell"><div class="card"><h2>Panel failed to load</h2><p>${escapeHtml(error.message || 'Unknown error')}</p></div></div>`;
 });
 
 async function bootstrap() {
@@ -22,26 +32,31 @@ async function bootstrap() {
 
 function bindRuntimeUpdates() {
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.type !== 'PANEL_STATE_UPDATED') {
-      return;
-    }
-
-    if (state.tabId && message.tabId !== state.tabId) {
-      return;
-    }
-
+    if (message.type !== 'PANEL_STATE_UPDATED') return;
+    if (state.tabId && message.tabId !== state.tabId) return;
     Object.assign(state, message.payload);
     render();
   });
 }
 
 async function refreshState() {
-  const response = await chrome.runtime.sendMessage({ type: 'GET_PANEL_STATE' });
-  if (!response.ok) {
-    throw new Error(response.error || 'Unable to fetch panel state');
-  }
+  const response = await sendMessage({ type: 'GET_PANEL_STATE' });
   Object.assign(state, response);
+  if (state.apiKeyConfigured && !state.modelList.length && !state.modelListLoading) {
+    refreshModelList(false);
+  }
   render();
+}
+
+async function sendMessage(message) {
+  const response = await chrome.runtime.sendMessage(message);
+  if (!response) throw new Error('No response from background');
+  if (!response.ok) {
+    const error = new Error(response.error || 'Request failed');
+    error.code = response.code;
+    throw error;
+  }
+  return response;
 }
 
 function render() {
@@ -50,321 +65,615 @@ function render() {
 }
 
 function renderShell() {
+  if (state.view === 'settings') {
+    return `<div class="shell">${renderHeader(true)}${renderSettings()}</div>`;
+  }
+  return `<div class="shell">${renderHeader(false)}${renderMain()}</div>`;
+}
+
+function renderHeader(inSettings) {
+  return `
+    <div class="header">
+      <div class="brand">
+        <div class="brand-mark">TL</div>
+        <span>Terms Lens</span>
+      </div>
+      <button class="icon-btn" data-action="${inSettings ? 'go-main' : 'go-settings'}" title="${inSettings ? 'Back' : 'Settings'}" aria-label="${inSettings ? 'Back' : 'Settings'}">
+        ${inSettings ? '←' : '⚙'}
+      </button>
+    </div>
+  `;
+}
+
+function renderMain() {
+  if (!state.apiKeyConfigured) {
+    return renderOnboardingBanner();
+  }
+
   const page = state.page || {};
+  const status = page.analysisStatus || 'idle';
+
+  return `
+    ${renderHero(page)}
+    ${renderStatusOrError(page, status)}
+    ${renderAnalysis(page, status)}
+    <div class="footnote">Analysis powered by your ${escapeHtml(state.providers[state.llmConfig?.provider]?.label || state.llmConfig?.provider || 'configured provider')} key. Page text leaves your browser only when you click Analyze.</div>
+  `;
+}
+
+function renderOnboardingBanner() {
+  return `
+    <div class="banner">
+      <div class="banner-icon">!</div>
+      <div>
+        <h3>Add your API key to start</h3>
+        <p>Terms Lens runs entirely from your browser using your own Groq or Gemini key. Free tiers available — get a key in under a minute.</p>
+        <div class="btn-row" style="margin-top:12px">
+          <button class="btn-primary" data-action="go-settings">Open settings</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderHero(page) {
   const detection = page.detection;
-  const analysis = page.analysis;
-  const pageTypeLabel = detection?.pageType ? (state.labels[detection.pageType] || detection.pageType) : 'Current page';
+  const pageType = detection?.pageType ? (state.labels[detection.pageType] || detection.pageType) : 'Current page';
   const title = page.title || 'Current page';
-  const statusText = getStatusText(page.analysisStatus, detection);
+  const url = page.url || '';
+  const signupCount = detection?.signupForms?.length || 0;
+  const linkCount = detection?.linkedPolicies?.length || 0;
 
   return `
-    <div class="shell">
-      <section class="hero">
-        <div class="eyebrow">Terms Lens</div>
-        <h1>${escapeHtml(pageTypeLabel)}</h1>
-        <p>${escapeHtml(title)}</p>
-        <div class="status-row" style="margin-top:14px">
-          <span class="status-pill">${escapeHtml(statusText)}</span>
-          ${detection ? `<span class="status-pill">Confidence ${(detection.confidence * 100).toFixed(0)}%</span>` : ''}
-          <span class="status-pill">Session only</span>
-          ${page.analysisSource ? `<span class="status-pill">${escapeHtml(getSourceLabel(page.analysisSource))}</span>` : ''}
-        </div>
-        <div class="toolbar" style="margin-top:16px">
-          <div class="button-row">
-            <button class="primary-btn" data-action="analyze">${analysis ? 'Re-run analysis' : 'Analyze this page'}</button>
-            ${analysis ? '<button class="soft-btn" data-action="refresh">Refresh state</button>' : ''}
-          </div>
-          <label class="toggle">
-            <input type="checkbox" data-action="toggle-auto-open" ${state.prefs.autoOpen ? 'checked' : ''}>
-            Auto-open on high-confidence policy pages
-          </label>
-        </div>
-      </section>
-      ${renderBody(page)}
+    <div class="card hero">
+      <div class="eyebrow">${escapeHtml(pageType)}</div>
+      <h1>${escapeHtml(title)}</h1>
+      <p class="subtitle">${escapeHtml(url)}</p>
+      <div class="status-row" style="margin-top:12px">
+        ${signupCount ? `<span class="pill pill-accent">Signup form detected</span>` : ''}
+        ${linkCount ? `<span class="pill">${linkCount} policy link${linkCount === 1 ? '' : 's'} found</span>` : ''}
+      </div>
     </div>
   `;
 }
 
-function renderBody(page) {
-  if (!page.detection) {
-    return renderLoadingState();
-  }
-
-  if (page.analysisStatus === 'loading') {
+function renderStatusOrError(page, status) {
+  if (status === 'fetching') {
     return `
-      <section class="panel">
-        <h2>Analyzing this document</h2>
-        <p class="muted">Reading visible legal text and all discovered linked Terms, Privacy, and Cookies pages in the background.</p>
+      <div class="card">
+        <div class="eyebrow">Fetching</div>
+        <h2>Reading the policy page</h2>
+        <p>Pulling the linked Terms or Privacy document and stripping nav/ads.</p>
         <div class="skeleton"></div>
-        <div class="skeleton"></div>
-        <div class="skeleton"></div>
-      </section>
-      ${renderTrustNote(page)}
+        <div class="skeleton short"></div>
+      </div>
     `;
   }
 
-  if (page.analysisStatus === 'error') {
+  if (status === 'analyzing') {
+    return renderAnalyzingState(page);
+  }
+
+  if (status === 'error') {
     return `
-      <section class="error-state">
-        <h2>Analysis unavailable</h2>
-        <p>${escapeHtml(page.lastError || 'The backend could not analyze this page.')}</p>
-        <div class="button-row" style="margin-top:12px">
-          <button class="primary-btn" data-action="analyze">Try again</button>
+      <div class="card" style="border-color: rgba(185,28,28,0.2)">
+        <div class="eyebrow" style="color: var(--danger)">Analysis stopped</div>
+        <h2>Something went wrong</h2>
+        <p>${escapeHtml(page.lastError || 'Unknown error')}</p>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn-primary" data-action="analyze">Try again</button>
+          <button class="btn-secondary" data-action="go-settings">Settings</button>
         </div>
-      </section>
-      ${renderTrustNote(page)}
+      </div>
     `;
   }
 
-  if (!page.detection.isLegalPage && !page.analysis) {
+  if (status === 'idle' || status === 'not-legal') {
+    if (page.analysis) return '';
     return `
-      <section class="empty-state">
-        <h2>This page does not look like a policy page</h2>
-        <p>The detector did not find a full standalone policy, but Terms Lens can still inspect inline legal text and automatically read discovered policy links in the background.</p>
-        <div class="button-row" style="margin-top:12px">
-          <button class="soft-btn" data-action="analyze">Analyze anyway</button>
-        </div>
-      </section>
-      ${renderTrustNote(page)}
+      <div class="card">
+        ${renderReadyToAnalyze(page)}
+      </div>
     `;
   }
 
-  if (!page.analysis) {
-    return `
-      <section class="empty-state">
-        <h2>Ready to review this document</h2>
-        <p>Run analysis to inspect visible legal text and automatically read linked Terms, Privacy, and Cookies pages in the background.</p>
-      </section>
-      ${renderTrustNote(page)}
-    `;
+  return '';
+}
+
+function renderAnalyzingState(page) {
+  const progress = page.progress || {};
+  const stage = progress.stage || 'starting';
+  const total = progress.total || 1;
+  const completed = progress.completed || 0;
+  const pct = Math.round((completed / total) * 100);
+
+  let title = 'Analyzing';
+  let detail = 'Running policy text through your selected model.';
+  if (stage === 'map') {
+    title = 'Reading the document section by section';
+    detail = `Section ${completed} / ${total}`;
+  } else if (stage === 'reduce') {
+    title = 'Combining findings';
+    detail = 'Merging section findings into one summary.';
+  } else if (stage === 'single-pass') {
+    title = 'Analyzing the document';
+    detail = progress.tokenEstimate ? `≈${progress.tokenEstimate.toLocaleString()} tokens` : '';
   }
 
   return `
-    <div class="analysis-grid">
-      <section class="panel">
-        <div class="eyebrow">What matters most</div>
-        <h2>Quick read</h2>
-        <ul class="summary-list">
-          ${(page.analysis.summary || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
-        </ul>
-        ${renderCitationRow(page.analysis.summaryCitations || [])}
-      </section>
-      <section class="panel">
-        <div class="eyebrow">Risk cards</div>
-        <h2>Watch for these terms</h2>
-        <div class="cards">
-          ${(page.analysis.riskCards || []).map(renderRiskCard).join('')}
-        </div>
-      </section>
-      <section class="panel">
-        <div class="eyebrow">Rights and obligations</div>
-        <h2>What you can do</h2>
-        <ul class="summary-list">
-          ${(page.analysis.keyPoints || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
-        </ul>
-      </section>
-      ${renderConversation(page.analysis)}
+    <div class="card">
+      <div class="eyebrow">In progress</div>
+      <h2>${escapeHtml(title)}</h2>
+      <p>${escapeHtml(detail)}</p>
+      <div class="progress">
+        <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+        <span class="progress-text">${pct}%</span>
+      </div>
+      <div class="skeleton"></div>
+      <div class="skeleton short"></div>
     </div>
-    ${renderTrustNote(page)}
   `;
 }
 
-function renderRiskCard(card) {
+function renderReadyToAnalyze(page) {
+  const detection = page.detection;
+  const linkCount = detection?.linkedPolicies?.length || 0;
+  const signupCount = detection?.signupForms?.length || 0;
+
+  if (!linkCount && !signupCount && !detection?.isLegalPage) {
+    return `
+      <h2>No policy detected here</h2>
+      <p>Open a Terms, Privacy, or signup page to analyze. Or run analysis on the visible text anyway.</p>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn-secondary" data-action="analyze">Analyze visible text</button>
+      </div>
+    `;
+  }
+
+  const description = signupCount
+    ? `This signup form links to ${linkCount} policy page${linkCount === 1 ? '' : 's'}. Click Analyze to read them for you.`
+    : linkCount
+      ? `Found ${linkCount} policy link${linkCount === 1 ? '' : 's'}. Click Analyze to fetch and summarize.`
+      : `This looks like a policy page. Click Analyze to summarize.`;
+
   return `
-    <article class="risk-card">
-      <header>
+    <h2>Ready to analyze</h2>
+    <p>${escapeHtml(description)}</p>
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn-primary" data-action="analyze">Analyze policy</button>
+    </div>
+  `;
+}
+
+function renderAnalysis(page, status) {
+  const analysis = page.analysis;
+  if (!analysis) return '';
+  if (status === 'fetching' || status === 'analyzing') return '';
+
+  return `
+    ${renderSummary(analysis, page)}
+    ${renderRisks(analysis)}
+    ${renderKeyPoints(analysis)}
+    ${renderConversation(analysis)}
+    <div class="btn-row" style="justify-content:center;margin-top:4px">
+      <button class="btn-secondary" data-action="analyze">Re-run analysis</button>
+    </div>
+  `;
+}
+
+function renderSummary(analysis, page) {
+  const source = page.analysisSource;
+  const sourceLine = source?.url
+    ? `Source: <a href="${escapeAttribute(source.url)}" target="_blank" rel="noopener">${escapeHtml(truncate(source.url, 60))}</a>`
+    : '';
+
+  return `
+    <div class="card">
+      <div class="eyebrow">Summary</div>
+      <h2>What this document says</h2>
+      <p>${escapeHtml(analysis.summary || 'No summary generated.')}</p>
+      ${sourceLine ? `<p class="subtitle" style="font-size:12px;margin-top:8px">${sourceLine}</p>` : ''}
+    </div>
+  `;
+}
+
+function renderRisks(analysis) {
+  const risks = analysis.risks || [];
+  if (!risks.length) return '';
+
+  return `
+    <div class="card">
+      <div class="eyebrow">Risks &amp; surprises</div>
+      <h2>Things to know before agreeing</h2>
+      <div>
+        ${risks.map(renderRiskCard).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderRiskCard(risk) {
+  const severity = ['low', 'medium', 'high'].includes(risk.severity) ? risk.severity : 'low';
+  return `
+    <article class="risk-card severity-${severity}">
+      <div class="risk-card-header">
         <div>
-          <div class="eyebrow">${escapeHtml(card.category || 'Risk')}</div>
-          <h3>${escapeHtml(card.title)}</h3>
+          <div class="category-tag">${escapeHtml(formatCategory(risk.category))}</div>
+          <h4>${escapeHtml(risk.title || risk.text || 'Risk')}</h4>
         </div>
-        <span class="severity severity-${escapeHtml(card.severity || 'low')}">${escapeHtml(card.severity || 'low')}</span>
-      </header>
-      <p>${escapeHtml(card.explanation)}</p>
-      <footer>
-        ${(card.citations || []).map(renderCitationChip).join('')}
-      </footer>
+        <span class="severity-tag">${escapeHtml(severity)}</span>
+      </div>
+      <p>${escapeHtml(risk.explanation || risk.text || '')}</p>
+      ${risk.sourceQuote ? `<div class="risk-quote quote-truncate">"${escapeHtml(risk.sourceQuote)}"</div>` : ''}
     </article>
+  `;
+}
+
+function renderKeyPoints(analysis) {
+  const points = analysis.keyPoints || [];
+  if (!points.length) return '';
+
+  return `
+    <div class="card">
+      <div class="eyebrow">Key points</div>
+      <h2>What you're agreeing to</h2>
+      <ul class="key-points">
+        ${points.map((point) => `<li>${escapeHtml(point.text || point)}</li>`).join('')}
+      </ul>
+    </div>
   `;
 }
 
 function renderConversation(analysis) {
   const conversation = analysis.conversation || [];
+  const suggested = analysis.suggestedQuestions || [];
+
   return `
-    <section class="conversation">
-      <div class="eyebrow">Ask follow-up questions</div>
-      <h2>Grounded Q&A</h2>
-      <div class="chip-row" style="margin-bottom:14px">
-        ${(analysis.suggestedQuestions || []).map((question) => `
-          <button class="suggested-btn" data-action="ask-suggested" data-question="${escapeAttribute(question)}">${escapeHtml(question)}</button>
-        `).join('')}
-      </div>
-      <div class="message-list">
-        ${conversation.length ? conversation.map(renderMessage).join('') : '<div class="empty-state"><h2>No questions yet</h2><p>Ask about data sharing, cancellation, arbitration, refund rights, or account deletion.</p></div>'}
+    <div class="card conversation">
+      <div class="eyebrow">Q&amp;A</div>
+      <h2>Ask about this document</h2>
+      <p>Answers come only from the policy text. If something isn't covered, the chatbot will say so.</p>
+      ${suggested.length ? `
+        <div class="suggested-row">
+          ${suggested.map((q) => `<button class="suggested-btn" data-action="ask-suggested" data-question="${escapeAttribute(q)}">${escapeHtml(q)}</button>`).join('')}
+        </div>` : ''}
+      <div class="messages">
+        ${conversation.length ? conversation.map(renderMessage).join('') : '<p class="subtitle" style="font-size:12.5px">No questions yet. Try one of the suggestions, or ask your own.</p>'}
       </div>
       <form class="composer" data-action="ask-form">
-        <input type="text" name="question" placeholder="Ask a grounded question about this policy" aria-label="Ask a grounded question about this policy">
-        <button class="primary-btn" type="submit">${state.asking ? 'Asking...' : 'Ask'}</button>
+        <input type="text" name="question" placeholder="Ask anything about this policy..." aria-label="Ask a question" ${state.asking ? 'disabled' : ''}>
+        <button class="btn-primary" type="submit" ${state.asking ? 'disabled' : ''}>${state.asking ? 'Asking…' : 'Ask'}</button>
       </form>
-    </section>
+    </div>
   `;
 }
 
 function renderMessage(message) {
-  const roleLabel = message.role === 'user' ? 'You' : (message.grounded === false ? 'Answer with caution' : 'Grounded answer');
+  const isUser = message.role === 'user';
+  const ungrounded = !isUser && message.grounded === false;
+  const role = isUser ? 'You' : (ungrounded ? 'Not in document' : 'From the document');
+  const citations = (message.citations || []).filter((c) => c.quote);
+
   return `
-    <article class="message ${message.role === 'user' ? 'message-user' : ''}">
-      <header>${escapeHtml(roleLabel)}</header>
-      <div>${escapeHtml(message.text)}</div>
-      ${message.citations?.length ? `<footer>${message.citations.map(renderCitationChip).join('')}</footer>` : ''}
-    </article>
+    <div class="message ${isUser ? 'user' : ''} ${ungrounded ? 'ungrounded' : ''}">
+      <div class="message-role">${escapeHtml(role)}</div>
+      <div>${escapeHtml(message.text || '')}</div>
+      ${citations.length ? `
+        <div class="citations">
+          ${citations.map((c) => `<button class="citation-chip" data-action="open-citation" data-section-index="${escapeAttribute(c.sectionIndex ?? '')}" title="${escapeAttribute(c.quote)}">${escapeHtml(truncate(c.quote, 60))}</button>`).join('')}
+        </div>` : ''}
+    </div>
   `;
 }
 
-function renderTrustNote(page) {
-  const analysisSource = page.analysisSource;
-  const groundedText = page.analysis?.groundingNote || 'Terms Lens sends extracted page sections to your configured analysis backend. Raw page text is kept only in session storage inside the extension by default.';
-  const sourceText = analysisSource
-    ? `Analysis source: ${getSourceLabel(analysisSource)}${analysisSource.url ? ` (${analysisSource.url})` : ''}.`
-    : 'Analysis source: not selected yet.';
+function formatCategory(value) {
+  if (!value) return 'Risk';
+  return String(value).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ===== Settings =====
+
+function renderSettings() {
+  const draft = state.draftConfig || state.llmConfig || {};
+  const provider = draft.provider || 'groq';
+  const providerInfo = state.providers[provider] || {};
+  const models = state.modelList || [];
 
   return `
-    <section class="panel trust-note">
-      <div class="eyebrow">Trust layer</div>
-      <p style="margin:0 0 8px 0">${escapeHtml(sourceText)}</p>
-      <p style="margin:0">${escapeHtml(groundedText)}</p>
-    </section>
+    <div class="card">
+      <div class="eyebrow">Provider</div>
+      <h2>Choose where to send analysis requests</h2>
+      <div class="radio-group" style="margin-bottom: var(--space-3)">
+        ${Object.entries(state.providers).map(([key, info]) => `
+          <label class="${provider === key ? 'active' : ''}">
+            <input type="radio" name="provider" value="${escapeAttribute(key)}" ${provider === key ? 'checked' : ''}>
+            ${escapeHtml(info.label)}
+          </label>
+        `).join('')}
+      </div>
+
+      <div class="field">
+        <label>API key</label>
+        <div class="input-with-button">
+          <input type="${state.showApiKey ? 'text' : 'password'}" name="apiKey" value="${escapeAttribute(draft.apiKey || '')}" placeholder="${escapeAttribute(state.apiKeyConfigured ? '••••••••••' : 'Paste your key')}" autocomplete="off" spellcheck="false">
+          <button class="btn-secondary" type="button" data-action="toggle-show-key">${state.showApiKey ? 'Hide' : 'Show'}</button>
+        </div>
+        <div class="field-help">
+          ${providerInfo.keyHelpUrl ? `<a href="${escapeAttribute(providerInfo.keyHelpUrl)}" target="_blank" rel="noopener">Get a free ${escapeHtml(providerInfo.label || provider)} key →</a>` : ''}
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Analysis model ${state.modelListLoading ? '<span class="pill" style="margin-left:6px;font-size:10px">loading…</span>' : ''}</label>
+        <select name="analysisModel" ${!models.length ? 'disabled' : ''}>
+          ${models.length ? renderModelOptions(models, draft.analysisModel, provider, 'analysis') : '<option>Add API key, then refresh model list</option>'}
+        </select>
+        <div class="field-help">Used for the full document summary &amp; risks. Pick a higher-quality model.</div>
+      </div>
+
+      <div class="field">
+        <label>Chat model</label>
+        <select name="chatModel" ${!models.length ? 'disabled' : ''}>
+          ${models.length ? renderModelOptions(models, draft.chatModel, provider, 'chat') : '<option>Add API key, then refresh model list</option>'}
+        </select>
+        <div class="field-help">Used for follow-up Q&amp;A. A faster model is fine here.</div>
+      </div>
+
+      <div class="field">
+        <label>Custom base URL (optional)</label>
+        <input type="text" name="baseUrlOverride" value="${escapeAttribute(draft.baseUrlOverride || '')}" placeholder="${escapeAttribute(providerInfo.defaultBaseUrl || '')}" spellcheck="false">
+        <div class="field-help">Leave blank to use the official endpoint. Use this only for custom proxies.</div>
+      </div>
+
+      ${state.modelListError ? `<div class="test-result error">${escapeHtml(state.modelListError)}</div>` : ''}
+
+      <div class="btn-row" style="margin-top: var(--space-3)">
+        <button class="btn-primary" data-action="save-config">Save</button>
+        <button class="btn-secondary" data-action="refresh-models">${state.modelListLoading ? 'Loading…' : 'Refresh model list'}</button>
+        <button class="btn-secondary" data-action="test-key" ${state.testing ? 'disabled' : ''}>${state.testing ? 'Testing…' : 'Test key'}</button>
+      </div>
+
+      ${renderTestResult()}
+
+      <div class="field" style="margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--line)">
+        <label class="toggle">
+          <input type="checkbox" name="autoPopupOnSignup" ${state.uiPrefs.autoPopupOnSignup ? 'checked' : ''}>
+          Show floating prompt on signup pages
+        </label>
+        <label class="toggle" style="margin-top: var(--space-2)">
+          <input type="checkbox" name="autoOpen" ${state.uiPrefs.autoOpen ? 'checked' : ''}>
+          Auto-open side panel on policy pages
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="eyebrow">Privacy</div>
+      <h2>How your data is handled</h2>
+      <ul class="key-points">
+        <li>Your API key is stored locally in this browser profile only.</li>
+        <li>Page text is sent to your selected provider over HTTPS only when you click Analyze.</li>
+        <li>Nothing is sent to Anthropic, the extension author, or any third party.</li>
+        <li>Don't install on a shared computer where you don't trust other extensions.</li>
+      </ul>
+    </div>
   `;
 }
 
-function renderLoadingState() {
-  return `
-    <section class="panel">
-      <h2>Loading page context</h2>
-      <div class="skeleton"></div>
-      <div class="skeleton"></div>
-    </section>
-  `;
+function renderModelOptions(models, selected, provider, kind) {
+  const sorted = [
+    ...models.filter((id) => isRecommended(id, provider, kind)),
+    ...models.filter((id) => !isRecommended(id, provider, kind)),
+  ];
+  return sorted.map((id) => `<option value="${escapeAttribute(id)}" ${selected === id ? 'selected' : ''}>${escapeHtml(id)}${isRecommended(id, provider, kind) ? ' ★' : ''}</option>`).join('');
 }
 
-function renderCitationRow(citations) {
-  if (!citations.length) {
-    return '';
+function isRecommended(id, provider, kind) {
+  // Simple recommendation: matches well-known top picks per provider
+  const groqAnalysis = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'];
+  const groqChat = ['openai/gpt-oss-20b', 'llama-3.1-8b-instant'];
+  const geminiAnalysis = ['gemini-3.1-pro-preview', 'gemini-3-flash', 'gemini-2.5-pro'];
+  const geminiChat = ['gemini-3.1-flash-lite', 'gemini-3-flash', 'gemini-2.5-flash-lite'];
+
+  if (provider === 'groq') return (kind === 'chat' ? groqChat : groqAnalysis).includes(id);
+  if (provider === 'gemini') return (kind === 'chat' ? geminiChat : geminiAnalysis).includes(id);
+  return false;
+}
+
+function renderTestResult() {
+  if (!state.testResult) return '';
+  if (state.testResult.success) {
+    return `<div class="test-result success">Key works ✓ ${state.testResult.sample ? `Model replied: "${escapeHtml(truncate(state.testResult.sample, 60))}"` : ''}</div>`;
   }
-  return `<div class="chip-row" style="margin-top:14px">${citations.map(renderCitationChip).join('')}</div>`;
+  return `<div class="test-result error">${escapeHtml(state.testResult.error || 'Test failed')}</div>`;
 }
 
-function renderCitationChip(citation) {
-  return `<button class="citation-chip" data-action="open-citation" data-clause-id="${escapeAttribute(citation.clauseId || '')}" title="${escapeAttribute(citation.quoteSnippet || '')}">${escapeHtml(citation.label || citation.clauseId || 'Clause')}</button>`;
-}
+// ===== Events =====
 
 function bindEvents() {
-  app.querySelectorAll('[data-action="analyze"]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      await sendBackgroundMessage({ type: 'RUN_ANALYSIS' });
-    });
-  });
+  app.querySelectorAll('[data-action="go-settings"]').forEach((btn) => btn.addEventListener('click', () => {
+    state.view = 'settings';
+    state.draftConfig = state.draftConfig || { ...(state.llmConfig || {}), apiKey: '' };
+    state.testResult = null;
+    render();
+  }));
 
-  app.querySelectorAll('[data-action="refresh"]').forEach((button) => {
-    button.addEventListener('click', refreshState);
-  });
+  app.querySelectorAll('[data-action="go-main"]').forEach((btn) => btn.addEventListener('click', () => {
+    state.view = 'main';
+    state.draftConfig = null;
+    state.testResult = null;
+    render();
+  }));
 
-  app.querySelectorAll('[data-action="open-citation"]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      await sendBackgroundMessage({
-        type: 'OPEN_CITATION',
-        clauseId: button.dataset.clauseId,
-      });
-    });
-  });
+  app.querySelectorAll('[data-action="analyze"]').forEach((btn) => btn.addEventListener('click', async () => {
+    try {
+      await sendMessage({ type: 'RUN_ANALYSIS' });
+    } catch (error) {
+      console.error('Analysis failed:', error);
+    }
+  }));
 
-  app.querySelectorAll('[data-action="ask-suggested"]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      await submitQuestion(button.dataset.question || '');
-    });
-  });
+  app.querySelectorAll('[data-action="ask-suggested"]').forEach((btn) => btn.addEventListener('click', async () => {
+    await submitQuestion(btn.dataset.question || '');
+  }));
+
+  app.querySelectorAll('[data-action="open-citation"]').forEach((btn) => btn.addEventListener('click', async () => {
+    const sectionIndex = btn.dataset.sectionIndex;
+    await sendMessage({
+      type: 'OPEN_CITATION',
+      sectionIndex: sectionIndex !== '' ? Number(sectionIndex) : null,
+    }).catch((e) => console.error('Open citation:', e));
+  }));
 
   app.querySelector('[data-action="ask-form"]')?.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const form = event.currentTarget;
-    const input = form.elements.question;
+    const input = event.currentTarget.elements.question;
     const question = input.value.trim();
-    if (!question) {
-      return;
-    }
+    if (!question) return;
     input.value = '';
     await submitQuestion(question);
   });
 
-  app.querySelector('[data-action="toggle-auto-open"]')?.addEventListener('change', async (event) => {
-    await sendBackgroundMessage({
-      type: 'SAVE_PREFS',
-      prefs: {
-        autoOpen: event.currentTarget.checked,
-      },
-    });
+  // Settings events
+  app.querySelectorAll('input[name="provider"]').forEach((input) => input.addEventListener('change', async (event) => {
+    const next = (state.draftConfig = { ...(state.draftConfig || state.llmConfig), provider: event.target.value, analysisModel: '', chatModel: '' });
+    state.modelList = [];
+    state.modelListError = null;
+    render();
+    if (next.apiKey || state.apiKeyConfigured) {
+      await refreshModelList(false, next.provider, next.apiKey || null);
+    }
+  }));
+
+  app.querySelector('input[name="apiKey"]')?.addEventListener('input', (event) => {
+    state.draftConfig = { ...(state.draftConfig || state.llmConfig), apiKey: event.target.value };
+  });
+
+  app.querySelector('select[name="analysisModel"]')?.addEventListener('change', (event) => {
+    state.draftConfig = { ...(state.draftConfig || state.llmConfig), analysisModel: event.target.value };
+  });
+
+  app.querySelector('select[name="chatModel"]')?.addEventListener('change', (event) => {
+    state.draftConfig = { ...(state.draftConfig || state.llmConfig), chatModel: event.target.value };
+  });
+
+  app.querySelector('input[name="baseUrlOverride"]')?.addEventListener('input', (event) => {
+    state.draftConfig = { ...(state.draftConfig || state.llmConfig), baseUrlOverride: event.target.value };
+  });
+
+  app.querySelector('[data-action="toggle-show-key"]')?.addEventListener('click', () => {
+    state.showApiKey = !state.showApiKey;
+    render();
+  });
+
+  app.querySelector('[data-action="save-config"]')?.addEventListener('click', async () => {
+    if (!state.draftConfig) return;
+    const config = {
+      provider: state.draftConfig.provider,
+      analysisModel: state.draftConfig.analysisModel,
+      chatModel: state.draftConfig.chatModel,
+      baseUrlOverride: state.draftConfig.baseUrlOverride || '',
+    };
+    if (state.draftConfig.apiKey && state.draftConfig.apiKey.length > 4) {
+      config.apiKey = state.draftConfig.apiKey;
+    }
+    try {
+      await sendMessage({ type: 'SAVE_LLM_CONFIG', config });
+      state.draftConfig = null;
+      state.view = 'main';
+      await refreshState();
+    } catch (error) {
+      state.testResult = { success: false, error: error.message };
+      render();
+    }
+  });
+
+  app.querySelector('[data-action="refresh-models"]')?.addEventListener('click', async () => {
+    const draft = state.draftConfig || state.llmConfig;
+    await refreshModelList(true, draft?.provider, draft?.apiKey || null);
+  });
+
+  app.querySelector('[data-action="test-key"]')?.addEventListener('click', async () => {
+    state.testing = true;
+    state.testResult = null;
+    render();
+    try {
+      const draft = state.draftConfig || state.llmConfig;
+      const response = await sendMessage({
+        type: 'TEST_KEY',
+        provider: draft.provider,
+        apiKey: draft.apiKey || undefined,
+        model: draft.analysisModel,
+        baseUrlOverride: draft.baseUrlOverride || '',
+      });
+      state.testResult = response.success ? { success: true, sample: response.sample } : { success: false, error: response.error };
+    } catch (error) {
+      state.testResult = { success: false, error: error.message };
+    } finally {
+      state.testing = false;
+      render();
+    }
+  });
+
+  app.querySelector('input[name="autoPopupOnSignup"]')?.addEventListener('change', async (event) => {
+    await sendMessage({ type: 'SAVE_UI_PREFS', prefs: { autoPopupOnSignup: event.target.checked } });
+    await refreshState();
+  });
+
+  app.querySelector('input[name="autoOpen"]')?.addEventListener('change', async (event) => {
+    await sendMessage({ type: 'SAVE_UI_PREFS', prefs: { autoOpen: event.target.checked } });
     await refreshState();
   });
 }
 
+async function refreshModelList(force, provider, apiKey) {
+  state.modelListLoading = true;
+  state.modelListError = null;
+  render();
+  try {
+    const response = await sendMessage({
+      type: 'LIST_MODELS',
+      force,
+      provider,
+      apiKey,
+    });
+    state.modelList = response.models || [];
+    if (state.draftConfig) {
+      if (!state.draftConfig.analysisModel || !state.modelList.includes(state.draftConfig.analysisModel)) {
+        state.draftConfig.analysisModel = response.recommendedAnalysis || state.modelList[0] || '';
+      }
+      if (!state.draftConfig.chatModel || !state.modelList.includes(state.draftConfig.chatModel)) {
+        state.draftConfig.chatModel = response.recommendedChat || state.modelList[0] || '';
+      }
+    }
+    if (response.error) state.modelListError = response.error;
+  } catch (error) {
+    state.modelListError = error.message;
+  } finally {
+    state.modelListLoading = false;
+    render();
+  }
+}
+
 async function submitQuestion(question) {
+  if (!question) return;
   state.asking = true;
   render();
   try {
-    await sendBackgroundMessage({
-      type: 'ASK_FOLLOWUP',
-      question,
-    });
+    await sendMessage({ type: 'ASK_FOLLOWUP', question });
+  } catch (error) {
+    state.page = state.page || {};
+    state.page.lastError = error.message;
   } finally {
     state.asking = false;
     await refreshState();
   }
 }
 
-async function sendBackgroundMessage(message) {
-  const response = await chrome.runtime.sendMessage(message);
-  if (!response.ok) {
-    throw new Error(response.error || 'Request failed');
-  }
-  return response;
-}
-
-function getStatusText(status, detection) {
-  if (status === 'loading') {
-    return 'Analyzing now';
-  }
-  if (status === 'ready') {
-    return 'Analysis ready';
-  }
-  if (status === 'error') {
-    return 'Analysis error';
-  }
-  if (status === 'not-legal') {
-    return detection?.hasLegalLinks ? 'Linked policy detected' : 'Low legal-page confidence';
-  }
-  if (detection?.isLegalPage) {
-    return 'Policy page detected';
-  }
-  if (detection?.hasLegalLinks) {
-    return 'Linked policy detected';
-  }
-  return 'Ready';
-}
-
-function getSourceLabel(source) {
-  if (!source) {
-    return 'Source unknown';
-  }
-  if (source.type === 'linked-policy-fetch') {
-    return `Using linked ${state.labels[source.pageType] || source.label || 'policy'}`;
-  }
-  if (source.type === 'current-page-inline') {
-    return `Using inline ${state.labels[source.pageType] || source.label || 'policy'} text`;
-  }
-  return `Using current ${state.labels[source.pageType] || source.label || 'page'}`;
-}
+// ===== Helpers =====
 
 function escapeHtml(value) {
-  return String(value || '')
+  return String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -374,4 +683,9 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replace(/`/g, '&#96;');
+}
+
+function truncate(value, maxLen) {
+  const s = String(value || '');
+  return s.length > maxLen ? `${s.slice(0, maxLen - 1)}…` : s;
 }

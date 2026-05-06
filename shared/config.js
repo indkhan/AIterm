@@ -1,15 +1,26 @@
 export const STORAGE_KEYS = {
-  localPrefs: 'termsLens.localPrefs',
+  llmConfig: 'termsLens.llmConfig',
+  modelCache: 'termsLens.modelCache',
+  uiPrefs: 'termsLens.uiPrefs',
   tabStatePrefix: 'termsLens.tabState:',
+  policyCachePrefix: 'termsLens.policyCache:',
+  signupDismissPrefix: 'termsLens.signupDismiss:',
 };
 
-export const DEFAULT_PREFS = {
-  apiBaseUrl: 'http://127.0.0.1:5000',
+export const DEFAULT_LLM_CONFIG = {
+  provider: 'groq',
+  apiKey: '',
+  analysisModel: '',
+  chatModel: '',
+  baseUrlOverride: '',
+};
+
+export const DEFAULT_UI_PREFS = {
   autoOpen: false,
-  panelDensity: 'comfortable',
+  autoPopupOnSignup: true,
 };
 
-export const HIGH_CONFIDENCE_THRESHOLD = 0.72;
+export const HIGH_CONFIDENCE_THRESHOLD = 0.6;
 
 export const PAGE_TYPE_LABELS = {
   terms: 'Terms & Conditions',
@@ -19,3 +30,6 @@ export const PAGE_TYPE_LABELS = {
   legal: 'Legal Policy',
   generic: 'Policy Page',
 };
+
+export const POLICY_CACHE_TTL_MS = 15 * 60 * 1000;
+export const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
