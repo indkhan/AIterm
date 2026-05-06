@@ -8,7 +8,7 @@ export const STORAGE_KEYS = {
 };
 
 export const DEFAULT_LLM_CONFIG = {
-  provider: 'groq',
+  provider: 'gemini',
   apiKey: '',
   analysisModel: '',
   chatModel: '',

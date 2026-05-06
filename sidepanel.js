@@ -97,7 +97,7 @@ function renderMain() {
     ${renderHero(page)}
     ${renderStatusOrError(page, status)}
     ${renderAnalysis(page, status)}
-    <div class="footnote">Analysis powered by your ${escapeHtml(state.providers[state.llmConfig?.provider]?.label || state.llmConfig?.provider || 'configured provider')} key. Page text leaves your browser only when you click Analyze.</div>
+    <div class="footnote">Analysis powered by your Gemini key. Page text leaves your browser only when you click Analyze.</div>
   `;
 }
 
@@ -107,7 +107,7 @@ function renderOnboardingBanner() {
       <div class="banner-icon">!</div>
       <div>
         <h3>Add your API key to start</h3>
-        <p>Terms Lens runs entirely from your browser using your own Groq or Gemini key. Free tiers available — get a key in under a minute.</p>
+        <p>Terms Lens runs entirely from your browser using your own Gemini key. Free tier available — get a key from Google AI Studio in under a minute.</p>
         <div class="btn-row" style="margin-top:12px">
           <button class="btn-primary" data-action="go-settings">Open settings</button>
         </div>
@@ -375,61 +375,55 @@ function formatCategory(value) {
 
 function renderSettings() {
   const draft = state.draftConfig || state.llmConfig || {};
-  const provider = draft.provider || 'groq';
-  const providerInfo = state.providers[provider] || {};
+  const providerInfo = state.providers['gemini'] || {};
   const models = state.modelList || [];
+  const modelsStatus = state.modelListLoading
+    ? '<span class="pill" style="margin-left:6px;font-size:10px">loading…</span>'
+    : (!models.length && !state.modelListError ? '<span class="pill" style="margin-left:6px;font-size:10px">paste key to load</span>' : '');
 
   return `
     <div class="card">
-      <div class="eyebrow">Provider</div>
-      <h2>Choose where to send analysis requests</h2>
-      <div class="radio-group" style="margin-bottom: var(--space-3)">
-        ${Object.entries(state.providers).map(([key, info]) => `
-          <label class="${provider === key ? 'active' : ''}">
-            <input type="radio" name="provider" value="${escapeAttribute(key)}" ${provider === key ? 'checked' : ''}>
-            ${escapeHtml(info.label)}
-          </label>
-        `).join('')}
-      </div>
+      <div class="eyebrow">Gemini API</div>
+      <h2>Connect your Google AI Studio key</h2>
 
       <div class="field">
-        <label>API key</label>
+        <label>API key ${state.modelListLoading ? '<span class="pill" style="margin-left:6px;font-size:10px">loading models…</span>' : ''}</label>
         <div class="input-with-button">
-          <input type="${state.showApiKey ? 'text' : 'password'}" name="apiKey" value="${escapeAttribute(draft.apiKey || '')}" placeholder="${escapeAttribute(state.apiKeyConfigured ? '••••••••••' : 'Paste your key')}" autocomplete="off" spellcheck="false">
+          <input type="${state.showApiKey ? 'text' : 'password'}" name="apiKey" value="${escapeAttribute(draft.apiKey || '')}" placeholder="${escapeAttribute(state.apiKeyConfigured ? '••••••••••' : 'Paste your AIza… key')}" autocomplete="off" spellcheck="false">
           <button class="btn-secondary" type="button" data-action="toggle-show-key">${state.showApiKey ? 'Hide' : 'Show'}</button>
         </div>
         <div class="field-help">
-          ${providerInfo.keyHelpUrl ? `<a href="${escapeAttribute(providerInfo.keyHelpUrl)}" target="_blank" rel="noopener">Get a free ${escapeHtml(providerInfo.label || provider)} key →</a>` : ''}
+          <a href="${escapeAttribute(providerInfo.keyHelpUrl || 'https://aistudio.google.com/app/apikey')}" target="_blank" rel="noopener">Get a free Gemini key at Google AI Studio →</a>
         </div>
       </div>
 
       <div class="field">
-        <label>Analysis model ${state.modelListLoading ? '<span class="pill" style="margin-left:6px;font-size:10px">loading…</span>' : ''}</label>
+        <label>Analysis model ${modelsStatus}</label>
         <select name="analysisModel" ${!models.length ? 'disabled' : ''}>
-          ${models.length ? renderModelOptions(models, draft.analysisModel, provider, 'analysis') : '<option>Add API key, then refresh model list</option>'}
+          ${models.length ? renderModelOptions(models, draft.analysisModel, 'analysis') : '<option>Paste API key above — models load automatically</option>'}
         </select>
-        <div class="field-help">Used for the full document summary &amp; risks. Pick a higher-quality model.</div>
+        <div class="field-help">Used for full document summary &amp; risks.</div>
       </div>
 
       <div class="field">
         <label>Chat model</label>
         <select name="chatModel" ${!models.length ? 'disabled' : ''}>
-          ${models.length ? renderModelOptions(models, draft.chatModel, provider, 'chat') : '<option>Add API key, then refresh model list</option>'}
+          ${models.length ? renderModelOptions(models, draft.chatModel, 'chat') : '<option>Paste API key above — models load automatically</option>'}
         </select>
-        <div class="field-help">Used for follow-up Q&amp;A. A faster model is fine here.</div>
+        <div class="field-help">Used for follow-up Q&amp;A. Faster model is fine.</div>
       </div>
 
       <div class="field">
         <label>Custom base URL (optional)</label>
         <input type="text" name="baseUrlOverride" value="${escapeAttribute(draft.baseUrlOverride || '')}" placeholder="${escapeAttribute(providerInfo.defaultBaseUrl || '')}" spellcheck="false">
-        <div class="field-help">Leave blank to use the official endpoint. Use this only for custom proxies.</div>
+        <div class="field-help">Leave blank unless using a custom proxy.</div>
       </div>
 
       ${state.modelListError ? `<div class="test-result error">${escapeHtml(state.modelListError)}</div>` : ''}
 
       <div class="btn-row" style="margin-top: var(--space-3)">
         <button class="btn-primary" data-action="save-config">Save</button>
-        <button class="btn-secondary" data-action="refresh-models">${state.modelListLoading ? 'Loading…' : 'Refresh model list'}</button>
+        <button class="btn-secondary" data-action="refresh-models">${state.modelListLoading ? 'Loading…' : 'Refresh models'}</button>
         <button class="btn-secondary" data-action="test-key" ${state.testing ? 'disabled' : ''}>${state.testing ? 'Testing…' : 'Test key'}</button>
       </div>
 
@@ -460,24 +454,18 @@ function renderSettings() {
   `;
 }
 
-function renderModelOptions(models, selected, provider, kind) {
+function renderModelOptions(models, selected, kind) {
   const sorted = [
-    ...models.filter((id) => isRecommended(id, provider, kind)),
-    ...models.filter((id) => !isRecommended(id, provider, kind)),
+    ...models.filter((id) => isRecommended(id, kind)),
+    ...models.filter((id) => !isRecommended(id, kind)),
   ];
-  return sorted.map((id) => `<option value="${escapeAttribute(id)}" ${selected === id ? 'selected' : ''}>${escapeHtml(id)}${isRecommended(id, provider, kind) ? ' ★' : ''}</option>`).join('');
+  return sorted.map((id) => `<option value="${escapeAttribute(id)}" ${selected === id ? 'selected' : ''}>${escapeHtml(id)}${isRecommended(id, kind) ? ' ★' : ''}</option>`).join('');
 }
 
-function isRecommended(id, provider, kind) {
-  // Simple recommendation: matches well-known top picks per provider
-  const groqAnalysis = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'];
-  const groqChat = ['openai/gpt-oss-20b', 'llama-3.1-8b-instant'];
-  const geminiAnalysis = ['gemini-3.1-pro-preview', 'gemini-3-flash', 'gemini-2.5-pro'];
+function isRecommended(id, kind) {
+  const geminiAnalysis = ['gemini-3.1-flash-lite', 'gemini-3.1-pro-preview', 'gemini-3-flash', 'gemini-2.5-pro'];
   const geminiChat = ['gemini-3.1-flash-lite', 'gemini-3-flash', 'gemini-2.5-flash-lite'];
-
-  if (provider === 'groq') return (kind === 'chat' ? groqChat : groqAnalysis).includes(id);
-  if (provider === 'gemini') return (kind === 'chat' ? geminiChat : geminiAnalysis).includes(id);
-  return false;
+  return (kind === 'chat' ? geminiChat : geminiAnalysis).includes(id);
 }
 
 function renderTestResult() {
@@ -534,20 +522,28 @@ function bindEvents() {
     await submitQuestion(question);
   });
 
-  // Settings events
-  app.querySelectorAll('input[name="provider"]').forEach((input) => input.addEventListener('change', async (event) => {
-    const next = (state.draftConfig = { ...(state.draftConfig || state.llmConfig), provider: event.target.value, analysisModel: '', chatModel: '' });
-    state.modelList = [];
-    state.modelListError = null;
-    render();
-    if (next.apiKey || state.apiKeyConfigured) {
-      await refreshModelList(false, next.provider, next.apiKey || null);
-    }
-  }));
-
-  app.querySelector('input[name="apiKey"]')?.addEventListener('input', (event) => {
-    state.draftConfig = { ...(state.draftConfig || state.llmConfig), apiKey: event.target.value };
-  });
+  // Settings events — API key: update draft + auto-load models after short debounce
+  let _keyDebounce = null;
+  const apiKeyInput = app.querySelector('input[name="apiKey"]');
+  if (apiKeyInput) {
+    apiKeyInput.addEventListener('input', (event) => {
+      const key = event.target.value;
+      state.draftConfig = { ...(state.draftConfig || state.llmConfig), provider: 'gemini', apiKey: key };
+      clearTimeout(_keyDebounce);
+      if (key.length >= 20) {
+        _keyDebounce = setTimeout(() => {
+          refreshModelList(false, 'gemini', key);
+        }, 600);
+      }
+    });
+    apiKeyInput.addEventListener('blur', (event) => {
+      const key = event.target.value;
+      clearTimeout(_keyDebounce);
+      if (key.length >= 20 && !state.modelListLoading) {
+        refreshModelList(false, 'gemini', key);
+      }
+    });
+  }
 
   app.querySelector('select[name="analysisModel"]')?.addEventListener('change', (event) => {
     state.draftConfig = { ...(state.draftConfig || state.llmConfig), analysisModel: event.target.value };
@@ -569,7 +565,7 @@ function bindEvents() {
   app.querySelector('[data-action="save-config"]')?.addEventListener('click', async () => {
     if (!state.draftConfig) return;
     const config = {
-      provider: state.draftConfig.provider,
+      provider: 'gemini',
       analysisModel: state.draftConfig.analysisModel,
       chatModel: state.draftConfig.chatModel,
       baseUrlOverride: state.draftConfig.baseUrlOverride || '',
@@ -590,7 +586,7 @@ function bindEvents() {
 
   app.querySelector('[data-action="refresh-models"]')?.addEventListener('click', async () => {
     const draft = state.draftConfig || state.llmConfig;
-    await refreshModelList(true, draft?.provider, draft?.apiKey || null);
+    await refreshModelList(true, 'gemini', draft?.apiKey || null);
   });
 
   app.querySelector('[data-action="test-key"]')?.addEventListener('click', async () => {
@@ -601,7 +597,7 @@ function bindEvents() {
       const draft = state.draftConfig || state.llmConfig;
       const response = await sendMessage({
         type: 'TEST_KEY',
-        provider: draft.provider,
+        provider: 'gemini',
         apiKey: draft.apiKey || undefined,
         model: draft.analysisModel,
         baseUrlOverride: draft.baseUrlOverride || '',
@@ -626,7 +622,7 @@ function bindEvents() {
   });
 }
 
-async function refreshModelList(force, provider, apiKey) {
+async function refreshModelList(force, _provider, apiKey) {
   state.modelListLoading = true;
   state.modelListError = null;
   render();
@@ -634,7 +630,7 @@ async function refreshModelList(force, provider, apiKey) {
     const response = await sendMessage({
       type: 'LIST_MODELS',
       force,
-      provider,
+      provider: 'gemini',
       apiKey,
     });
     state.modelList = response.models || [];

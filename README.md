@@ -10,12 +10,12 @@ Chrome extension that detects Terms, Privacy, and policy pages, shows a signup-p
 - Summarises the document in plain English — key points, risk cards with severity, verbatim source quotes
 - Answers follow-up questions strictly from the policy text (no hallucinated answers)
 - Handles huge documents (Google ToS, Meta ToS, AWS) via parallel map-reduce chunking
-- Works entirely from your browser with your own Groq or Gemini API key
+- Works entirely from your browser with your own Gemini API key
 
 ## Requirements
 
 - Google Chrome 116+
-- A free [Groq](https://console.groq.com/keys) or [Google AI Studio](https://aistudio.google.com/app/apikey) API key
+- A free [Google AI Studio](https://aistudio.google.com/app/apikey) Gemini API key (`AIza…`)
 
 No Python. No server. No `.env` file.
 
@@ -32,13 +32,12 @@ No Python. No server. No `.env` file.
 
 1. Click the Terms Lens icon in the Chrome toolbar → side panel opens
 2. Click **⚙ Settings**
-3. Choose **Groq** or **Gemini**
-4. Paste your API key — the model list loads automatically from the provider
-5. Pick an **Analysis model** (higher quality) and a **Chat model** (faster)
-6. Click **Test key** → green pill means it works
-7. Click **Save**
+3. Paste your Gemini API key (`AIza…`) — model list loads automatically
+4. Pick an **Analysis model** and **Chat model** (default: `gemini-3.1-flash-lite` for both)
+5. Click **Test key** → green pill means it works
+6. Click **Save**
 
-Free tier is enough. Groq gives ~500k tokens/day free; Gemini gives generous free-tier access.
+Free tier is enough — [get a key at Google AI Studio](https://aistudio.google.com/app/apikey).
 
 ## Usage
 

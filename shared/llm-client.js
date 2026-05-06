@@ -1,28 +1,13 @@
 export const PROVIDERS = {
-  groq: {
-    label: 'Groq',
-    defaultBaseUrl: 'https://api.groq.com/openai/v1',
-    keyHelpUrl: 'https://console.groq.com/keys',
-    modelPreference: [
-      'openai/gpt-oss-120b',
-      'llama-3.3-70b-versatile',
-      'qwen/qwen3-32b',
-      'openai/gpt-oss-20b',
-      'llama-3.1-8b-instant',
-    ],
-    chatModelPreference: [
-      'openai/gpt-oss-20b',
-      'llama-3.1-8b-instant',
-      'llama-3.3-70b-versatile',
-    ],
-  },
   gemini: {
-    label: 'Gemini (OpenAI compat)',
+    label: 'Gemini',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     keyHelpUrl: 'https://aistudio.google.com/app/apikey',
     modelPreference: [
+      'gemini-3.1-flash-lite',
       'gemini-3.1-pro-preview',
       'gemini-3-flash',
+      'gemini-2.5-flash-lite',
       'gemini-2.5-pro',
       'gemini-2.5-flash',
     ],
