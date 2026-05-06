@@ -72,8 +72,13 @@ async function sendMessage(message) {
 }
 
 function render() {
+  const scrollTop = app.parentElement ? app.parentElement.scrollTop : 0;
+  const docScrollY = document.documentElement.scrollTop || document.body.scrollTop;
   app.innerHTML = renderShell();
+  document.documentElement.scrollTop = docScrollY;
+  document.body.scrollTop = docScrollY;
   bindEvents();
+  document.body.classList.add('app-loaded');
 }
 
 function renderShell() {
@@ -109,7 +114,7 @@ function renderMain() {
     ${renderHero(page)}
     ${renderStatusOrError(page, status)}
     ${renderAnalysis(page, status)}
-    <div class="footnote">${ICONS.shield} Analysis powered by your Gemini key. Page text leaves your browser only when you click Analyze.</div>
+    <div class="footnote">${ICONS.shield} Analysis powered by your Gemini key. Page text leaves your browser only when you click Review.</div>
   `;
 }
 
@@ -219,8 +224,10 @@ function renderAnalyzingState(page) {
       <h2>${escapeHtml(title)}</h2>
       <p>${escapeHtml(detail)}</p>
       <div class="progress">
-        <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-        <span class="progress-text">${pct}%</span>
+        <div class="progress-bar${pct === 0 ? ' indeterminate' : ''}">
+          <div class="progress-bar-fill${pct > 0 ? ' has-progress' : ''}" style="width:${pct}%"></div>
+        </div>
+        <span class="progress-text">${pct > 0 ? `${pct}%` : '…'}</span>
       </div>
       <div class="skeleton"></div>
       <div class="skeleton short"></div>
