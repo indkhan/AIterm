@@ -28,9 +28,11 @@ const state = {
   testing: false,
   draftConfig: null,
   showApiKey: false,
+  pendingQuestion: null,
 };
 
 const app = document.getElementById('app');
+let _outsideClickHandler = null;
 
 bootstrap().catch((error) => {
   console.error('Failed to start Terms Lens panel:', error);
@@ -360,7 +362,16 @@ function renderConversation(analysis) {
           ${suggested.map((q) => `<button class="suggested-btn" data-action="ask-suggested" data-question="${escapeAttribute(q)}">${escapeHtml(q)}</button>`).join('')}
         </div>` : ''}
       <div class="messages">
-        ${conversation.length ? conversation.map(renderMessage).join('') : '<p class="subtitle" style="font-size:12.5px">No questions yet. Try one of the suggestions, or ask your own.</p>'}
+        ${conversation.length ? conversation.map(renderMessage).join('') : (!state.pendingQuestion ? '<p class="subtitle" style="font-size:12.5px">No questions yet. Try one of the suggestions, or ask your own.</p>' : '')}
+        ${state.pendingQuestion ? `
+          ${renderMessage({ role: 'user', text: state.pendingQuestion })}
+          <div class="message">
+            <div class="avatar avatar-assistant" aria-hidden="true">TL</div>
+            <div class="message-bubble thinking-bubble">
+              <div class="thinking-dots"><span></span><span></span><span></span></div>
+              <span class="thinking-label">Thinking…</span>
+            </div>
+          </div>` : ''}
       </div>
       <form class="composer" data-action="ask-form">
         <input type="text" name="question" placeholder="Ask anything about this policy…" aria-label="Ask a question" ${state.asking ? 'disabled' : ''}>
@@ -426,17 +437,23 @@ function renderSettings() {
 
       <div class="field">
         <label>Analysis model ${modelsStatus}</label>
-        <select name="analysisModel" ${!models.length ? 'disabled' : ''}>
-          ${models.length ? renderModelOptions(models, draft.analysisModel, 'analysis') : '<option>Paste API key above — models load automatically</option>'}
-        </select>
+        ${renderCustomSelect(
+          'analysisModel',
+          models.length ? buildSortedOptions(models, 'analysis') : [{ value: '', label: 'Paste API key above — models load automatically' }],
+          draft.analysisModel || '',
+          !models.length
+        )}
         <div class="field-help">Used for full document summary &amp; risks.</div>
       </div>
 
       <div class="field">
         <label>Chat model</label>
-        <select name="chatModel" ${!models.length ? 'disabled' : ''}>
-          ${models.length ? renderModelOptions(models, draft.chatModel, 'chat') : '<option>Paste API key above — models load automatically</option>'}
-        </select>
+        ${renderCustomSelect(
+          'chatModel',
+          models.length ? buildSortedOptions(models, 'chat') : [{ value: '', label: 'Paste API key above — models load automatically' }],
+          draft.chatModel || '',
+          !models.length
+        )}
         <div class="field-help">Used for follow-up Q&amp;A. Faster model is fine.</div>
       </div>
 
@@ -486,6 +503,36 @@ function renderModelOptions(models, selected, kind) {
     ...models.filter((id) => !isRecommended(id, kind)),
   ];
   return sorted.map((id) => `<option value="${escapeAttribute(id)}" ${selected === id ? 'selected' : ''}>${escapeHtml(id)}${isRecommended(id, kind) ? ' ★' : ''}</option>`).join('');
+}
+
+function buildSortedOptions(models, kind) {
+  return [
+    ...models.filter((id) => isRecommended(id, kind)),
+    ...models.filter((id) => !isRecommended(id, kind)),
+  ].map((id) => ({ value: id, label: id, recommended: isRecommended(id, kind) }));
+}
+
+function renderCustomSelect(name, options, selected, disabled) {
+  const selectedOpt = options.find((o) => o.value === selected);
+  const displayLabel = selectedOpt ? selectedOpt.label : (options[0]?.label || '—');
+  return `
+    <div class="custom-select${disabled ? ' custom-select-disabled' : ''}" data-name="${escapeAttribute(name)}">
+      <button class="custom-select-trigger" type="button" ${disabled ? 'disabled' : ''} aria-haspopup="listbox" aria-expanded="false">
+        <span class="custom-select-value">${escapeHtml(displayLabel)}</span>
+        <svg class="custom-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="custom-select-dropdown" role="listbox">
+        ${options.map((o) => `
+          <div class="custom-select-option${o.value === selected ? ' selected' : ''}"
+               data-value="${escapeAttribute(o.value)}"
+               role="option"
+               aria-selected="${o.value === selected}">
+            <span class="custom-select-option-label">${escapeHtml(o.label)}</span>
+            ${o.recommended ? '<span class="custom-select-star">★</span>' : ''}
+          </div>`).join('')}
+      </div>
+    </div>
+  `;
 }
 
 function isRecommended(id, kind) {
@@ -571,13 +618,56 @@ function bindEvents() {
     });
   }
 
-  app.querySelector('select[name="analysisModel"]')?.addEventListener('change', (event) => {
-    state.draftConfig = { ...(state.draftConfig || state.llmConfig), analysisModel: event.target.value };
+  // Custom select — toggle open/close
+  app.querySelectorAll('.custom-select-trigger').forEach((trigger) => {
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const select = trigger.closest('.custom-select');
+      const isOpen = select.classList.contains('open');
+      app.querySelectorAll('.custom-select.open').forEach((s) => {
+        s.classList.remove('open');
+        s.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+      });
+      if (!isOpen) {
+        select.classList.add('open');
+        trigger.setAttribute('aria-expanded', 'true');
+      }
+    });
   });
 
-  app.querySelector('select[name="chatModel"]')?.addEventListener('change', (event) => {
-    state.draftConfig = { ...(state.draftConfig || state.llmConfig), chatModel: event.target.value };
+  // Custom select — option pick
+  app.querySelectorAll('.custom-select-option').forEach((option) => {
+    option.addEventListener('click', () => {
+      const select = option.closest('.custom-select');
+      const name = select.dataset.name;
+      const value = option.dataset.value;
+      const label = option.querySelector('.custom-select-option-label')?.textContent || value;
+      select.querySelector('.custom-select-value').textContent = label;
+      select.querySelectorAll('.custom-select-option').forEach((o) => {
+        o.classList.toggle('selected', o.dataset.value === value);
+        o.setAttribute('aria-selected', String(o.dataset.value === value));
+      });
+      select.classList.remove('open');
+      select.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+      if (name === 'analysisModel') {
+        state.draftConfig = { ...(state.draftConfig || state.llmConfig), analysisModel: value };
+      } else if (name === 'chatModel') {
+        state.draftConfig = { ...(state.draftConfig || state.llmConfig), chatModel: value };
+      }
+    });
   });
+
+  // Close custom selects on outside click
+  if (_outsideClickHandler) document.removeEventListener('click', _outsideClickHandler);
+  _outsideClickHandler = (e) => {
+    if (!e.target.closest('.custom-select')) {
+      app.querySelectorAll('.custom-select.open').forEach((s) => {
+        s.classList.remove('open');
+        s.querySelector('.custom-select-trigger')?.setAttribute('aria-expanded', 'false');
+      });
+    }
+  };
+  document.addEventListener('click', _outsideClickHandler);
 
   app.querySelector('input[name="baseUrlOverride"]')?.addEventListener('input', (event) => {
     state.draftConfig = { ...(state.draftConfig || state.llmConfig), baseUrlOverride: event.target.value };
@@ -680,6 +770,7 @@ async function refreshModelList(force, _provider, apiKey) {
 async function submitQuestion(question) {
   if (!question) return;
   state.asking = true;
+  state.pendingQuestion = question;
   render();
   try {
     await sendMessage({ type: 'ASK_FOLLOWUP', question });
@@ -688,6 +779,7 @@ async function submitQuestion(question) {
     state.page.lastError = error.message;
   } finally {
     state.asking = false;
+    state.pendingQuestion = null;
     await refreshState();
   }
 }

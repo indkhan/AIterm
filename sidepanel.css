@@ -519,7 +519,111 @@ input, select, textarea { -webkit-appearance: none; appearance: none; }
 }
 .input-with-button input { flex: 1; }
 
-/* Toggle switch */
+/* ================== Custom Select ================== */
+.custom-select {
+  position: relative;
+}
+
+.custom-select-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms var(--ease), box-shadow 180ms var(--ease), background 180ms var(--ease);
+}
+.custom-select-trigger:hover { background: var(--surface-3); }
+.custom-select.open .custom-select-trigger {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.custom-select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.custom-select-chevron {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--ink-3);
+  transition: transform 220ms var(--ease);
+}
+.custom-select.open .custom-select-chevron { transform: rotate(180deg); }
+
+.custom-select-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg), 0 0 0 1px var(--line);
+  max-height: 240px;
+  overflow-y: auto;
+  display: none;
+  padding: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  backdrop-filter: blur(20px) saturate(1.4);
+}
+.custom-select-dropdown::-webkit-scrollbar { width: 5px; }
+.custom-select-dropdown::-webkit-scrollbar-track { background: transparent; }
+.custom-select-dropdown::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 999px; }
+.custom-select.open .custom-select-dropdown { display: block; animation: dropdownIn 180ms var(--ease-out) both; }
+
+.custom-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 120ms, color 120ms;
+}
+.custom-select-option-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+.custom-select-option:hover .custom-select-option-label { color: var(--ink); }
+.custom-select-option:hover { background: var(--surface-hover); }
+.custom-select-option.selected { background: var(--accent-soft); }
+.custom-select-option.selected .custom-select-option-label { color: var(--accent-2); }
+.custom-select-star { color: var(--warning); font-size: 11px; flex-shrink: 0; }
+
+.custom-select-disabled .custom-select-trigger { opacity: 0.5; cursor: not-allowed; }
+
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ================== Toggle switch ================== */
 .toggle {
   display: flex;
   align-items: center;
@@ -1054,6 +1158,38 @@ input, select, textarea { -webkit-appearance: none; appearance: none; }
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* ================== Thinking indicator ================== */
+.thinking-bubble {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+.thinking-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.thinking-dots span {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  animation: thinkBounce 1.3s ease-in-out infinite;
+}
+.thinking-dots span:nth-child(2) { animation-delay: 0.18s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.36s; }
+.thinking-label {
+  font-size: 12px;
+  color: var(--ink-3);
+  font-style: italic;
+}
+@keyframes thinkBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30%            { transform: translateY(-5px); opacity: 1; }
 }
 
 /* ================== Spinner ================== */
